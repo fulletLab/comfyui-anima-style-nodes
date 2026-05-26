@@ -1,56 +1,45 @@
-# Anima Style Explorer (Anima-2b)
-![Anima Style Explorer](assets/banner.jpg)
-A quality-of-life node for ComfyUI that adds artist and style browsing, visual selection, and prompt autocomplete directly inside the workflow.
+# Anima Style Explorer for ComfyUI
 
-> This is an independent community tool.
-> It does **not** connect to or make requests to the original website.
+![Anima Style Explorer](assets/banner.jpg)
+
+A quality-of-life ComfyUI node for browsing anime artist styles, Animadex style tags, Animadex character tags, local reference previews, and prompt autocomplete directly inside a workflow.
+
+This is an independent community tool. It works offline by default and only uses network features when the user explicitly enables or runs them.
+
+Current version: `1.0.9`
 
 ---
 
 ## Installation
 
-1. Download or clone this repository
+1. Download or clone this repository.
 2. Place the folder inside:
 
-```
+```text
 ComfyUI/custom_nodes/
 ```
 
-3. Restart ComfyUI
+3. Restart ComfyUI.
 
-The node will appear as:
+The node appears as:
 
-```
+```text
 Anima Style Explorer
 ```
 
 ---
 
-## What it does
-
-This node replaces the usual "type and guess" prompt workflow with an interactive style selector.
-
-It works similarly to **CLIP Text Encode**:
-
-* connect a CLIP model
-* write your prompt
-* send conditioning directly to KSampler
-
-The node automatically injects the selected `@artist` tag into the prompt and encodes everything in a single step.
-
----
-
 ## Basic Workflow
 
-```
+```text
 CheckpointLoader
       |
-   (clip) ──► Anima Style Explorer ──► (conditioning) ──► KSampler (positive)
+   (clip) ---> Anima Style Explorer ---> (conditioning) ---> KSampler (positive)
                     |
                  prompt
 ```
 
-No extra nodes required.
+The node works like a CLIP Text Encode replacement: write a prompt, choose styles or characters visually, and send the encoded conditioning directly to the sampler.
 
 ---
 
@@ -58,60 +47,120 @@ No extra nodes required.
 
 ### Visual Style Browser
 
-Open a gallery of 5000+ artists with thumbnails and preview references.
-Click any artist to instantly apply it to the prompt.
+Open a large gallery of bundled Anima style references and apply artist tags directly into the prompt.
 
-### Prompt Autocomplete
+### Animadex Styles and Characters
 
-Type `@` in the prompt box and a live suggestion list appears with previews.
+The browser includes dedicated tabs for:
 
-### Random Style
+- `Animadex Styles`
+- `Characters`
 
-Instantly injects a random artist into your prompt — useful for exploration and inspiration.
+Character entries use normal Danbooru-style character tags without `@`. Style entries keep the `@artist` format.
+
+### Trigger and Trigger + Tags
+
+Character cards support two insertion modes:
+
+- `Trigger`: inserts the character trigger only, for example `hatsune miku, vocaloid`
+- `Trigger + tags`: inserts the trigger plus useful descriptive tags, for example `hatsune miku, vocaloid, 1girl, aqua eyes, twintails`
+
+### Apply Modal
+
+Clicking `Apply Style` opens a centered modal instead of covering the thumbnail. It lets you:
+
+- add the new style to the prompt
+- replace the current style
+- replace all current styles
+- replace a specific style slot when several artists are active
+
+### Prompt Preview
+
+The browser includes an editable prompt preview synced with the active prompt widget, so changes made by style, character, and Auto Cycle actions are visible immediately.
 
 ### Auto Cycle
 
-Automatically queues generations while cycling artists one by one.
-Great for discovering new styles hands-free.
+Auto Cycle can continuously queue prompts while rotating tags. The settings panel supports:
+
+- styles only
+- characters only
+- styles + characters
+- multiple artists per cycle
+- multiple character groups per cycle
+- `Trigger` or `Trigger + tags` character insertion
+- subject tag control such as `1girl`, `1boy`, `2girls`, or keeping the prompt as-is
+- repeat count before picking new tags
+- uniform random or image-count weighted random
+- resume after stop
+
+Auto Cycle keeps style and character replacement separate, so character tags do not overwrite artist tags and artist tags keep their `@`.
+
+### Offline First
+
+The bundled local dataset works without internet. Remote image loading is disabled by default.
+
+Remote preview images for Animadex entries require enabling `Remote Images` from the top bar. When remote images are disabled, tags still work offline.
 
 ### Update Styles
 
-The node includes a built-in database of 20,000+ legacy artists plus dedicated **Animadex Styles** and **Characters** browser tabs. Enable **Show Animadex in All Styles** in the Browser tools menu only when you also want those entries mixed into the main All Styles tab, then click **Update Styles** to refresh the active source with local rate limiting.
+Use `Update Styles` from the tools menu to refresh the local style or Animadex indexes when internet access is available.
 
-### Internet Access
+### Fullet Prompt Publishing
 
-The browser works offline by default with the bundled local datasets. Remote preview images start disabled, and Fullet Prompts shows an **Enable Internet Access** gate before it loads anything from the network. Updating styles or refreshing the Animadex index requires internet only when the user clicks the update action.
+Connect a Fullet Personal API Key to publish recent local generations as normal posts or multi-image style collages.
 
-### Publish Style Collages to Fullet
+---
 
-Connect a Fullet Personal API Key, open **Publish Collage**, and choose one or more recent local generations that include an `@artist` tag.
+## Internet and Privacy
 
-* one selected image publishes as a normal Anima post
-* multiple selected images publish as one collage-style post
-* collage posts include per-image prompt metadata plus a small style comparison based on the selected `@artist` tags and the bundled Anima dataset metrics
+- Local browsing and autocomplete work offline.
+- Remote images are opt-in.
+- Updating indexes only happens when the user clicks the update action.
+- Fullet publishing only uses the key the user provides.
+- API keys are stored locally and are not embedded in workflows.
+
+---
+
+## Registry Metadata
+
+This package is ready for the ComfyUI Registry using:
+
+```toml
+[tool.comfy]
+PublisherId = "fulletlab"
+DisplayName = "Anima Style Explorer"
+```
+
+Publish with:
+
+```bash
+comfy node publish
+```
 
 ---
 
 ## Credits
 
-Style explorer and dataset concept by @ThetaCursed
+Style explorer and legacy dataset concept by ThetaCursed:
+
 https://thetacursed.github.io/Anima-Style-Explorer
 
-Legacy preview assets are loaded from:
+Legacy preview assets:
+
 https://github.com/ThetaCursed/Anima-Assets
 
-Optional Animadex artist/character index:
+Optional Animadex artist and character index:
+
 https://animadex.net
 
-All credit for the organization, tagging, and visual references belongs to its original creator.
-If the original author requests any modification or removal of dataset content, it will be respected.
+All credit for organization, tagging, and visual references belongs to the original creators.
 
 ---
 
 ## Compatibility
 
-* ComfyUI (latest)
-* Anima 2B
+- ComfyUI latest
+- Anima / anime checkpoints
 
 ---
 
@@ -119,4 +168,4 @@ If the original author requests any modification or removal of dataset content, 
 
 Code: MIT License
 
-Dataset: Provided only for offline autocomplete and browsing functionality with attribution to the original project.
+Dataset references are provided for offline autocomplete and browsing functionality with attribution to the original projects.

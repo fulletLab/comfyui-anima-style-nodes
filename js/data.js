@@ -17,6 +17,10 @@ export const Data = (() => {
         return list.filter((item) => String(item?.source || "").toLowerCase() !== "animadex");
     }
 
+    function _isCharacter(item) {
+        return String(item?.source_kind || "").toLowerCase() === "character";
+    }
+
     async function _load() {
         try {
             const raw = localStorage.getItem(CACHE_KEY);
@@ -88,12 +92,15 @@ export const Data = (() => {
         return list.filter(a => a._s.includes(lq));
     }
 
-    async function random() {
+    async function randomStyle() {
         const list = await all();
-        const styles = list.filter((item) => String(item?.source_kind || "").toLowerCase() !== "character");
-        const pool = styles.length ? styles : list;
-        return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+        const styles = list.filter((item) => !_isCharacter(item));
+        return styles.length ? styles[Math.floor(Math.random() * styles.length)] : null;
     }
 
-    return { all, animadex, reset, search, random };
+    async function random() {
+        return randomStyle();
+    }
+
+    return { all, animadex, reset, search, random, randomStyle };
 })();

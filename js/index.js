@@ -3,6 +3,7 @@ import { injectCSS } from "./styles.js";
 import { Data } from "./data.js";
 import { AC } from "./autocomplete.js";
 import { AutoCycle } from "./autocycle.js";
+import { getPromptWidget, syncPromptTagState } from "./utils.js";
 
 const ANIMA_SIZE_KEY = "_anima_saved_size";
 
@@ -125,6 +126,8 @@ function ensureTagDisplayWidget(node) {
         type: "anima_tag",
         value: "",
         draw(ctx, n, width, y) {
+            const promptWidget = getPromptWidget(n);
+            if (promptWidget) syncPromptTagState(n, String(promptWidget.value || ""));
             const tag = n._currentTag;
             if (!tag) return;
             const kind = String(n._currentTagKind || "style").toUpperCase();
@@ -176,8 +179,15 @@ async function openStyleBrowser(node) {
         const browser = mod?.Browser;
         if (!browser) throw new Error("Browser module unavailable");
         browser.open((artist, options) => AutoCycle.inject(node, artist, options), node);
+        AutoCycle.bindControls?.(document.getElementById("anima-browser"));
         const cycleBtn = browser.cycleBtn?.();
-        if (cycleBtn) cycleBtn.onclick = () => AutoCycle.toggle(node);
+        if (cycleBtn) {
+            cycleBtn.onclick = (event) => {
+                event?.preventDefault?.();
+                event?.stopPropagation?.();
+                AutoCycle.toggle(node);
+            };
+        }
     } catch (error) {
         console.error("[AnimaStyleExplorer] Failed to load Style Browser", error);
         alert("Could not load Style Browser. Reload ComfyUI and check the browser console.");

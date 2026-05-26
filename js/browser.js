@@ -26,11 +26,12 @@ import {
 import { attachBrowserEvents } from "./browser_events.js";
 import { getBrowserTemplate } from "./browser_template.js";
 import { Swipe } from "./swipe.js";
-import { applyFulletSelection, buildFulletCopyText, getPromptWidget, remoteImagesEnabled, thumbUrl } from "./utils.js";
+import { applyFulletSelection, buildFulletCopyText, getPromptWidget, getStylePromptSlots, remoteImagesEnabled, setPromptValue, syncPromptTagState, thumbUrl } from "./utils.js";
 import { showToast } from "./toast.js";
 
 export const Browser = (() => {
-    let el, grid, countEl, onPick, activeNode = null;
+    let el, grid, countEl, promptEditor, promptStatus, onPick, activeNode = null;
+    let _promptPollTimer = null;
     let filter = "", sort = "works", category = "all", _renderId = 0, _observer, _lastList = [], _lastHighlightedTag = "";
     const FULLET_PROMPTS_PAGE_SIZE = 48;
     const FULLET_PROMPTS_SCROLL_MARGIN = 960;
@@ -71,6 +72,42 @@ export const Browser = (() => {
         try {
             localStorage.setItem(key, String(value));
         } catch { }
+    }
+
+    function _refreshPromptPreview(message = "") {
+        if (!promptEditor) return;
+        const widget = activeNode ? getPromptWidget(activeNode) : null;
+        if (activeNode && widget) {
+            syncPromptTagState(activeNode, String(widget.value || ""));
+        }
+        if (document.activeElement !== promptEditor) {
+            promptEditor.value = widget ? String(widget.value || "") : "";
+        }
+        if (promptStatus && message) {
+            promptStatus.textContent = message;
+            setTimeout(() => {
+                if (promptStatus?.isConnected && promptStatus.textContent === message) {
+                    promptStatus.textContent = "editable";
+                }
+            }, 1200);
+        }
+    }
+
+    function _writePromptPreview() {
+        if (!activeNode || !promptEditor) return;
+        const widget = getPromptWidget(activeNode);
+        if (!widget) {
+            if (promptStatus) promptStatus.textContent = "no prompt widget";
+            return;
+        }
+        setPromptValue(
+            activeNode,
+            widget,
+            promptEditor.value,
+            String(activeNode?._currentTag || ""),
+            String(activeNode?._currentTagKind || "")
+        );
+        if (promptStatus) promptStatus.textContent = "updated";
     }
 
     function _isRemoteFavoriteSyncPending() {
@@ -649,6 +686,7 @@ export const Browser = (() => {
             showToast("Prompt applied", "success", 1500, { anchor: anchorEl });
         }
 
+        _refreshPromptPreview("Prompt applied");
         return { ok: true };
     }
 
@@ -677,6 +715,8 @@ export const Browser = (() => {
             el = document.getElementById("anima-browser");
             grid = el?.querySelector("#anima-grid") || null;
             countEl = el?.querySelector("#anima-count") || null;
+            promptEditor = el?.querySelector("#anima-prompt-editor") || null;
+            promptStatus = el?.querySelector("#anima-prompt-status") || null;
             return;
         }
 
@@ -688,6 +728,9 @@ export const Browser = (() => {
         document.body.appendChild(el);
         grid = el.querySelector("#anima-grid");
         countEl = el.querySelector("#anima-count");
+        promptEditor = el.querySelector("#anima-prompt-editor");
+        promptStatus = el.querySelector("#anima-prompt-status");
+        promptEditor?.addEventListener("input", _writePromptPreview);
 
         attachBrowserEvents({
             el,
@@ -764,7 +807,9 @@ export const Browser = (() => {
                     return;
                 }
                 const result = await onPick?.(item);
-                if (result?.ok === false || String(item?.source_kind || "").toLowerCase() === "character") return;
+                if (result?.ok === false) return;
+                _refreshPromptPreview("Prompt updated");
+                if (String(item?.source_kind || "").toLowerCase() === "character") return;
                 highlight(item?.tag || "");
             },
             getImageUrl: (item) => {
@@ -942,9 +987,10 @@ export const Browser = (() => {
             imageUrl: url,
             isUniq,
             isFav,
-            onApply: async (selectedArtist, anchorEl = null, mode = "style") => {
-                const result = await onPick?.(selectedArtist, { mode });
+            onApply: async (selectedArtist, anchorEl = null, mode = "style", actionOptions = {}) => {
+                const result = await onPick?.(selectedArtist, { mode, ...actionOptions });
                 if (result?.ok === false) return;
+                _refreshPromptPreview("Prompt updated");
 
                 const kind = String(selectedArtist?.source_kind || "").toLowerCase() === "character"
                     ? "CHARACTER"
@@ -967,6 +1013,7 @@ export const Browser = (() => {
                 const idx = _lastList.findIndex((x) => x.tag === selectedArtist.tag);
                 _openSwipe(idx >= 0 ? idx : 0);
             },
+            getStyleSlots: () => getStylePromptSlots(activeNode),
         });
     }
 
@@ -978,23 +1025,39 @@ export const Browser = (() => {
         grid.querySelector(`.anima-card[data-tag="${escaped}"]`)?.classList.add("selected");
     }
 
+    function _hasCachedGrid() {
+        if (!grid || !_lastList.length || !grid.children.length) return false;
+        return !grid.querySelector(".anima-spinner");
+    }
+
     async function open(cb, node = null) {
         _build();
         onPick = cb;
         activeNode = node || null;
         _remoteEnabled = _safeSessionGet("anima_remote_enabled", "false") === "true";
         _remoteFavoritesLoaded = false;
+        const hasCachedGrid = _hasCachedGrid();
         el.classList.remove("hidden");
+        _refreshPromptPreview();
+        clearInterval(_promptPollTimer);
+        _promptPollTimer = setInterval(() => _refreshPromptPreview(), 350);
         el.querySelector(".cycle-search input").focus();
         await _ensureLocalToken();
         await _refreshAuthStatus();
         await _loadLocalFavorites();
+        if (hasCachedGrid) {
+            _setCategoryTabs();
+            highlight(_lastHighlightedTag);
+            return;
+        }
         await _render();
     }
 
     function close() {
         Swipe.close();
         _detachFulletScrollHandler();
+        clearInterval(_promptPollTimer);
+        _promptPollTimer = null;
         el?.classList.add("hidden");
     }
 

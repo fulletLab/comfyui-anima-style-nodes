@@ -54,6 +54,84 @@
                         <span class="btn-icon">&#9654;</span>
                         <span class="btn-lbl">Play</span>
                     </button>
+                    <div class="cycle-settings-wrap">
+                        <button class="cycle-settings-btn" id="anima-cycle-settings" title="Auto Cycle settings" aria-label="Auto Cycle settings">&#9881;</button>
+                        <div class="cycle-settings-panel hidden" id="anima-cycle-settings-panel">
+                            <div class="cycle-settings-head">
+                                <div>
+                                    <strong>Auto Cycle Settings</strong>
+                                    <span>Choose what rotates when Play queues the next prompt.</span>
+                                </div>
+                                <button type="button" id="anima-cycle-settings-close" title="Close">&#10005;</button>
+                            </div>
+                            <div class="cycle-settings-grid">
+                                <label class="cycle-control">
+                                    <span>Rotate</span>
+                                    <select id="anima-cycle-source">
+                                        <option value="styles">Styles only</option>
+                                        <option value="characters">Characters only</option>
+                                        <option value="all">Styles + Characters</option>
+                                    </select>
+                                </label>
+                                <label class="cycle-control">
+                                    <span>Character Insert</span>
+                                    <select id="anima-cycle-character-mode">
+                                        <option value="trigger">Trigger</option>
+                                        <option value="trigger-tags">Trigger + tags</option>
+                                    </select>
+                                </label>
+                                <label class="cycle-control cycle-control-small">
+                                    <span>Artists</span>
+                                    <div class="cycle-stepper">
+                                        <button type="button" data-step-target="anima-cycle-artists" data-step-delta="-1" aria-label="Decrease artists">-</button>
+                                        <input id="anima-cycle-artists" type="number" min="1" max="6" step="1" value="1"/>
+                                        <button type="button" data-step-target="anima-cycle-artists" data-step-delta="1" aria-label="Increase artists">+</button>
+                                    </div>
+                                    <small>How many @style tags per cycle.</small>
+                                </label>
+                                <label class="cycle-control cycle-control-small">
+                                    <span>Characters</span>
+                                    <div class="cycle-stepper">
+                                        <button type="button" data-step-target="anima-cycle-characters" data-step-delta="-1" aria-label="Decrease characters">-</button>
+                                        <input id="anima-cycle-characters" type="number" min="1" max="6" step="1" value="1"/>
+                                        <button type="button" data-step-target="anima-cycle-characters" data-step-delta="1" aria-label="Increase characters">+</button>
+                                    </div>
+                                    <small>How many character groups per cycle.</small>
+                                </label>
+                                <label class="cycle-control">
+                                    <span>Subject Tag</span>
+                                    <select id="anima-cycle-subject">
+                                        <option value="keep">Keep prompt</option>
+                                        <option value="1girl">1girl</option>
+                                        <option value="1boy">1boy</option>
+                                        <option value="2girls">2girls</option>
+                                        <option value="2boys">2boys</option>
+                                        <option value="1girl, 1boy">1girl + 1boy</option>
+                                    </select>
+                                </label>
+                                <label class="cycle-control cycle-control-small">
+                                    <span>Images</span>
+                                    <div class="cycle-stepper">
+                                        <button type="button" data-step-target="anima-cycle-repeats" data-step-delta="-1" aria-label="Decrease images">-</button>
+                                        <input id="anima-cycle-repeats" type="number" min="1" max="24" step="1" value="1"/>
+                                        <button type="button" data-step-target="anima-cycle-repeats" data-step-delta="1" aria-label="Increase images">+</button>
+                                    </div>
+                                    <small>Queue count before picking new tags.</small>
+                                </label>
+                                <label class="cycle-control">
+                                    <span>Random</span>
+                                    <select id="anima-cycle-random">
+                                        <option value="uniform">Uniform</option>
+                                        <option value="weighted">By image count</option>
+                                    </select>
+                                </label>
+                                <label class="cycle-check">
+                                    <input id="anima-cycle-resume" type="checkbox"/>
+                                    <span>Resume after stop</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
                     <span class="anima-cycle-status" id="anima-cycle-status">stopped</span>
                     <button class="anima-swipe-btn" id="anima-swipe-btn" title="Swipe through styles one by one">Swipe Mode</button>
                     <div class="cycle-search">
@@ -62,6 +140,13 @@
                     </div>
                     <div class="cycle-gap"></div>
                     <span class="cycle-hint">Automatically queues prompts to test styles in a continuous loop</span>
+                </div>
+                <div class="anima-prompt-panel">
+                    <div class="anima-prompt-head">
+                        <span>Prompt Preview</span>
+                        <small id="anima-prompt-status">editable</small>
+                    </div>
+                    <textarea id="anima-prompt-editor" spellcheck="false" placeholder="Active prompt text will appear here..."></textarea>
                 </div>
                 <div class="body">
                     <div class="anima-grid" id="anima-grid">

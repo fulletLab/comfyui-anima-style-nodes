@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-anima-style-nodes"
-description = "A quality-of-life node for ComfyUI that lets you browse 7000+ anime artists and styles, visually select tags (Danbooru-based), and autocomplete prompts with artistic styles for Anima-2b."
-version = "1.0.8"
+description = "A quality-of-life node for ComfyUI that lets you browse anime artists, Animadex styles, character tags, visual previews, prompt autocomplete, and configurable Auto Cycle prompt testing."
+version = "1.0.9"
 license = {text = "MIT License"}
 dependencies = ["aiohttp"]
 authors = [{ name = "fulletlab" }]
