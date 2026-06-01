@@ -119,25 +119,6 @@ Connect a Fullet Personal API Key to publish recent local generations as normal 
 - Fullet publishing only uses the key the user provides.
 - API keys are stored locally and are not embedded in workflows.
 
----
-
-## Registry Metadata
-
-This package is ready for the ComfyUI Registry using:
-
-```toml
-[tool.comfy]
-PublisherId = "fulletlab"
-DisplayName = "Anima Style Explorer"
-```
-
-Publish with:
-
-```bash
-comfy node publish
-```
-
----
 
 ## Credits
 
