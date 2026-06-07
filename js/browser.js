@@ -1,3 +1,4 @@
+import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { FULLET_API_BASE, FULLET_BASE, SITE_BASE } from "./config.js";
 import { Data } from "./data.js";
@@ -10,6 +11,8 @@ import {
 } from "./browser_helpers.js";
 import {
     buildFavoritesList,
+    exportLocalFavorites,
+    importLocalFavorites,
     loadLocalFavorites as fetchLocalFavorites,
     loadRemoteFavorites as fetchRemoteFavorites,
     mutateLocalFavorites as sendLocalFavoriteMutation,
@@ -23,6 +26,17 @@ import {
     renderChunkedGrid,
     renderRemoteGate,
 } from "./browser_renderers.js";
+import {
+    buildGeneratedList,
+    decorateGeneratedArtists,
+    exportGeneratedGallery,
+    importGeneratedGallery,
+    isGeneratedGalleryEnabled,
+    loadGeneratedPreviews,
+    removeGeneratedPreview,
+    scanGeneratedHistory,
+    setGeneratedGalleryEnabled,
+} from "./browser_generated.js";
 import { attachBrowserEvents } from "./browser_events.js";
 import { getBrowserTemplate } from "./browser_template.js";
 import { Swipe } from "./swipe.js";
@@ -37,12 +51,24 @@ export const Browser = (() => {
     const FULLET_PROMPTS_SCROLL_MARGIN = 960;
     let _fulletPosts = [], _fulletLoaded = false, _fulletNextOffset = 0, _fulletHasMore = true, _fulletLoading = false, _fulletLoadPromise = null, _fulletScrollHandler = null, _fulletError = "";
     let _localFavorites = [], _localFavoritesLoaded = false;
+    let _generatedPreviews = [], _generatedLoaded = false, _generatedLoading = false;
     let _remoteFavorites = [], _remoteFavoritesLoaded = false;
     let _favoriteMap = new Map();
     let _authPollTimer = null, _localApiToken = "";
-    let _authConnected = false, _authUsername = "";
+    let _authConnected = false, _authUsername = "", _authUnavailable = false;
     let _remoteEnabled = false;
     let _remoteFavoriteSyncPromise = null;
+    let _lastPageTotal = 1;
+    const TAB_CONFIG_KEY = "anima_visible_tabs_v1";
+    const DEFAULT_VISIBLE_TABS = ["all", "animadex-styles", "animadex-characters", "generated", "fullet", "favorites"];
+    const TAB_BUTTONS = [
+        ["#anima-cat-all", "all"],
+        ["#anima-cat-animadex-styles", "animadex-styles"],
+        ["#anima-cat-animadex-characters", "animadex-characters"],
+        ["#anima-cat-generated", "generated"],
+        ["#anima-cat-fullet", "fullet"],
+        ["#anima-cat-favorites", "favorites"],
+    ];
 
     function _safeSessionGet(key, fallback = "") {
         try {
@@ -72,6 +98,223 @@ export const Browser = (() => {
         try {
             localStorage.setItem(key, String(value));
         } catch { }
+    }
+
+    function _bodyEl() {
+        return el?.querySelector(".body") || null;
+    }
+
+    function _restoreOrResetScroll(options = {}) {
+        const bodyEl = _bodyEl();
+        if (!bodyEl) return;
+        if (options?.anchorSnapshot?.key) {
+            const key = String(options.anchorSnapshot.key || "");
+            const topOffset = Number(options.anchorSnapshot.topOffset || 0);
+            const restore = () => {
+                const chunks = Array.from(grid?.querySelectorAll(".anima-chunk") || []);
+                const index = _lastList.findIndex((item) => _itemAnchorKey(item) === key);
+                const chunkIndex = index >= 0 ? Math.floor(index / Math.max(1, Number(options.pageSize) || 100)) : -1;
+                const chunk = chunkIndex >= 0 ? chunks[chunkIndex] : null;
+                chunk?._mount?.();
+
+                const card = grid?.querySelector(`[data-anima-anchor="${CSS.escape(key)}"]`);
+                if (!card) return false;
+                card.scrollIntoView({ block: "start" });
+                const nextBodyEl = _bodyEl();
+                if (nextBodyEl && Number.isFinite(topOffset)) {
+                    nextBodyEl.scrollTop = Math.max(0, nextBodyEl.scrollTop - topOffset);
+                }
+                _syncPageInput();
+                return true;
+            };
+            if (restore()) return;
+            requestAnimationFrame(() => {
+                if (restore()) return;
+                setTimeout(() => {
+                    if (restore()) return;
+                    if (options.scrollSnapshot) {
+                        _restoreOrResetScroll({ ...options, anchorSnapshot: null });
+                    }
+                }, 80);
+            });
+            return;
+        }
+        if (options?.scrollSnapshot) {
+            const snapshot = options.scrollSnapshot;
+            const restore = () => {
+                const nextBodyEl = _bodyEl();
+                const chunks = Array.from(grid?.querySelectorAll(".anima-chunk") || []);
+                const page = Math.max(1, Math.min(chunks.length || 1, Number.parseInt(snapshot.page, 10) || 1));
+                const chunk = chunks[page - 1];
+                if (!nextBodyEl || !chunk) return;
+                const ratioOffset = Number.isFinite(snapshot.pageRatio)
+                    ? chunk.offsetHeight * snapshot.pageRatio
+                    : Number(snapshot.pageOffset || 0);
+                const pageOffset = Math.max(0, Math.min(chunk.offsetHeight, ratioOffset));
+                nextBodyEl.scrollTop = Math.max(0, chunk.offsetTop + pageOffset);
+                _syncPageInput();
+            };
+            restore();
+            requestAnimationFrame(restore);
+            return;
+        }
+        if (Number.isFinite(options?.restoreScrollTop)) {
+            const nextTop = Math.max(0, Number(options.restoreScrollTop) || 0);
+            bodyEl.scrollTop = nextTop;
+            requestAnimationFrame(() => {
+                const nextBodyEl = _bodyEl();
+                if (nextBodyEl) nextBodyEl.scrollTop = nextTop;
+                _syncPageInput();
+            });
+            return;
+        }
+        if (!options?.preserveScroll) {
+            bodyEl.scrollTop = 0;
+        }
+    }
+
+    function _itemAnchorKey(item) {
+        if (!item) return "";
+        if (isFulletLike(item)) {
+            return `fullet:${String(item?.id || item?.postId || item?.postUrl || "")}`;
+        }
+        return `style:${String(item?.tag || "")}`;
+    }
+
+    function _captureAnchorSnapshot() {
+        const bodyEl = _bodyEl();
+        if (!bodyEl) return null;
+        const bodyRect = bodyEl.getBoundingClientRect();
+        const cards = Array.from(grid?.querySelectorAll("[data-anima-anchor]") || []);
+        let best = null;
+        let bestDistance = Infinity;
+        for (const card of cards) {
+            const rect = card.getBoundingClientRect();
+            if (rect.bottom <= bodyRect.top || rect.top >= bodyRect.bottom) continue;
+            const distance = Math.abs(rect.top - bodyRect.top);
+            if (distance < bestDistance) {
+                best = card;
+                bestDistance = distance;
+            }
+        }
+        if (!best?.dataset?.animaAnchor) return null;
+        return {
+            key: best.dataset.animaAnchor,
+            topOffset: Math.max(0, best.getBoundingClientRect().top - bodyRect.top),
+        };
+    }
+
+    function _captureScrollSnapshot() {
+        const bodyEl = _bodyEl();
+        const chunks = Array.from(grid?.querySelectorAll(".anima-chunk") || []);
+        if (!bodyEl || !chunks.length) return null;
+
+        let page = 1;
+        const top = bodyEl.scrollTop + 24;
+        for (let i = 0; i < chunks.length; i++) {
+            if (chunks[i].offsetTop <= top) page = i + 1;
+            else break;
+        }
+
+        const chunk = chunks[page - 1];
+        const pageOffset = chunk ? Math.max(0, bodyEl.scrollTop - chunk.offsetTop) : 0;
+        const pageRatio = chunk && chunk.offsetHeight > 0 ? pageOffset / chunk.offsetHeight : 0;
+        return { page, pageOffset, pageRatio };
+    }
+
+    function _prepareRenderOptions(options = {}) {
+        if (!options?.preservePage || options?.scrollSnapshot) return options || {};
+        const anchorSnapshot = _captureAnchorSnapshot();
+        const scrollSnapshot = _captureScrollSnapshot();
+        if (!scrollSnapshot && !anchorSnapshot) return options;
+        return { ...options, anchorSnapshot, scrollSnapshot };
+    }
+
+    function _syncPageInput() {
+        const input = el?.querySelector("#anima-page-input");
+        if (!input || document.activeElement === input) return;
+        const chunks = Array.from(grid?.querySelectorAll(".anima-chunk") || []);
+        const bodyEl = _bodyEl();
+        if (!chunks.length || !bodyEl) {
+            input.value = "1";
+            return;
+        }
+
+        let page = 1;
+        const top = bodyEl.scrollTop + 24;
+        for (let i = 0; i < chunks.length; i++) {
+            if (chunks[i].offsetTop <= top) page = i + 1;
+            else break;
+        }
+        input.value = String(Math.max(1, Math.min(page, _lastPageTotal)));
+    }
+
+    function _updatePageJump(totalItems = 0, pageSize = 100) {
+        _lastPageTotal = Math.max(1, Math.ceil((Number(totalItems) || 0) / Math.max(1, Number(pageSize) || 100)));
+        const wrap = el?.querySelector("#anima-page-jump");
+        const input = el?.querySelector("#anima-page-input");
+        const totalEl = el?.querySelector("#anima-page-total");
+        if (!wrap || !input || !totalEl) return;
+        wrap.classList.toggle("visible", _lastPageTotal > 1);
+        input.max = String(_lastPageTotal);
+        totalEl.textContent = `/ ${_lastPageTotal}`;
+        _syncPageInput();
+    }
+
+    function _jumpToPage(rawPage = 1) {
+        const page = Math.max(1, Math.min(_lastPageTotal, Number.parseInt(rawPage, 10) || 1));
+        const chunks = Array.from(grid?.querySelectorAll(".anima-chunk") || []);
+        const chunk = chunks[page - 1];
+        const bodyEl = _bodyEl();
+        const input = el?.querySelector("#anima-page-input");
+        if (input) input.value = String(page);
+        if (!bodyEl) return;
+
+        if (chunk) {
+            chunk._mount?.();
+            bodyEl.scrollTo({ top: Math.max(0, chunk.offsetTop), behavior: "auto" });
+            requestAnimationFrame(() => {
+                bodyEl.scrollTop = Math.max(0, chunk.offsetTop);
+                _syncPageInput();
+            });
+            return;
+        }
+
+        const averageChunkHeight = chunks.length
+            ? chunks.reduce((sum, item) => sum + Math.max(1, item.offsetHeight || item.scrollHeight || 1), 0) / chunks.length
+            : Math.max(1, bodyEl.clientHeight);
+        bodyEl.scrollTo({ top: Math.max(0, (page - 1) * averageChunkHeight), behavior: "auto" });
+        requestAnimationFrame(_syncPageInput);
+    }
+
+    function _getVisibleTabs() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(TAB_CONFIG_KEY) || "null");
+            if (Array.isArray(parsed)) {
+                const values = parsed.filter((item) => DEFAULT_VISIBLE_TABS.includes(item));
+                return values.length ? values : ["all"];
+            }
+        } catch { }
+        return [...DEFAULT_VISIBLE_TABS];
+    }
+
+    function _setVisibleTabs(values = []) {
+        const clean = values.filter((item) => DEFAULT_VISIBLE_TABS.includes(item));
+        const next = clean.length ? clean : ["all"];
+        _safeLocalSet(TAB_CONFIG_KEY, JSON.stringify(next));
+        return next;
+    }
+
+    function _firstVisibleCategory() {
+        const visible = _getVisibleTabs();
+        return visible[0] || "all";
+    }
+
+    function _ensureVisibleCategory() {
+        const visible = _getVisibleTabs();
+        if (visible.includes(category)) return false;
+        category = _firstVisibleCategory();
+        return true;
     }
 
     function _refreshPromptPreview(message = "") {
@@ -142,14 +385,20 @@ export const Browser = (() => {
         const uploadBtn = el.querySelector("#anima-fullet-upload");
         if (!statusEl || !connectBtn || !disconnectBtn || !uploadBtn) return;
 
+        _authConnected = !!connected;
+        _authUsername = String(username || "").trim();
+        _authUnavailable = !!unavailable;
+        const visible = category === "fullet";
         statusEl.textContent = unavailable
             ? "Auth unavailable"
             : connected
                 ? `API Key @${username || "user"}`
                 : "API key not set";
         statusEl.classList.toggle("connected", connected && !unavailable);
-        connectBtn.style.display = connected ? "none" : "inline-flex";
-        disconnectBtn.style.display = connected ? "inline-flex" : "none";
+        statusEl.style.display = visible ? "" : "none";
+        connectBtn.style.display = visible && !connected ? "inline-flex" : "none";
+        disconnectBtn.style.display = visible && connected ? "inline-flex" : "none";
+        uploadBtn.style.display = visible ? "inline-flex" : "none";
         uploadBtn.classList.toggle("disabled", !connected);
     }
 
@@ -206,27 +455,69 @@ export const Browser = (() => {
     }
 
     function _isSortableCategory(value = category) {
-        return value === "all" || _isAnimadexCategory(value);
+        return value === "all" || value === "generated" || _isAnimadexCategory(value);
+    }
+
+    function _remoteImagesRelevant(value = category) {
+        if (value === "all") return true;
+        if (value === "fullet" || value === "favorites" || _isAnimadexCategory(value)) return true;
+        return false;
+    }
+
+    function _syncToolVisibility() {
+        if (!el) return;
+        const isAll = category === "all";
+        const isGenerated = category === "generated";
+        const isFavorites = category === "favorites";
+        const isStyleIndex = isAll || _isAnimadexCategory(category);
+        el.querySelector("#anima-animadex-source")?.closest(".hdr-settings-option")?.classList.toggle("hidden", !isAll);
+        el.querySelector("#anima-generated-import-menu")?.classList.toggle("hidden", !isGenerated);
+        el.querySelector("#anima-generated-export-menu")?.classList.toggle("hidden", !isGenerated);
+        el.querySelector("#anima-generated-export-progress")?.classList.toggle("hidden", true);
+        el.querySelector("#anima-favorites-import-menu")?.classList.toggle("hidden", !isFavorites);
+        el.querySelector("#anima-favorites-export-menu")?.classList.toggle("hidden", !isFavorites);
+        el.querySelector("#anima-update-styles")?.classList.toggle("hidden", !isStyleIndex);
+        el.querySelector("#anima-dl-images")?.classList.toggle("hidden", !isAll);
     }
 
     function _setCategoryTabs() {
         if (!el) return;
-        const tabs = [
-            ["#anima-cat-all", "all"],
-            ["#anima-cat-animadex-styles", "animadex-styles"],
-            ["#anima-cat-animadex-characters", "animadex-characters"],
-            ["#anima-cat-fullet", "fullet"],
-            ["#anima-cat-favorites", "favorites"],
-        ];
-        for (const [selector, value] of tabs) {
+        _ensureVisibleCategory();
+        const visible = new Set(_getVisibleTabs());
+        for (const [selector, value] of TAB_BUTTONS) {
             const btn = el.querySelector(selector);
             if (!btn) continue;
+            btn.style.display = visible.has(value) ? "" : "none";
             const active = category === value;
             btn.classList.toggle("active", active);
             btn.style.opacity = active ? "1" : "0.72";
         }
         const sortSelect = el.querySelector(".hdr-select");
         if (sortSelect) sortSelect.disabled = !_isSortableCategory();
+        const refreshBtn = el.querySelector("#anima-refresh");
+        if (refreshBtn) {
+            refreshBtn.title = category === "generated" ? "Refresh Gallery" : "Refresh Styles";
+            refreshBtn.setAttribute("aria-label", refreshBtn.title);
+        }
+        const remoteWrap = el.querySelector(".hdr-toggle-wrap");
+        if (remoteWrap) remoteWrap.style.display = _remoteImagesRelevant() ? "" : "none";
+        _syncToolVisibility();
+        _setAuthUi({ connected: _authConnected, username: _authUsername, unavailable: _authUnavailable });
+        _renderFooterTools();
+    }
+
+    function _renderFooterTools() {
+        const footerTools = el?.querySelector("#anima-footer-tools");
+        if (!footerTools) return;
+        footerTools.innerHTML = "";
+        if (category !== "generated" || !isGeneratedGalleryEnabled()) return;
+    }
+
+    async function _updateVisibleTabs(values = []) {
+        _setVisibleTabs(values);
+        const changed = _ensureVisibleCategory();
+        _setCategoryTabs();
+        if (changed) await _render();
     }
 
     function _detachFulletScrollHandler() {
@@ -307,6 +598,7 @@ export const Browser = (() => {
 
             _lastList = nextList.map((item) => _decorateFulletItem(item));
             _updateFulletCount(nextList.length);
+            _updatePageJump(_lastList.length, 40);
             bodyEl.scrollTop = prevScrollTop;
 
             if (!_fulletHasMore) {
@@ -437,9 +729,6 @@ export const Browser = (() => {
             const persistent = !!s.persistent;
             _authConnected = connected;
             _authUsername = String(s.username || "").trim();
-            _safeLocalSet("anima_keep_session", persistent ? "true" : "false");
-            const keepToggle = el.querySelector("#anima-keep-session");
-            if (keepToggle) keepToggle.checked = persistent;
             _setAuthUi({ connected, username: _authUsername });
 
             if (connected && syncPending && (!prevConnected || _isRemoteFavoriteSyncPending())) {
@@ -493,6 +782,28 @@ export const Browser = (() => {
         return { ok: true, data: result.data };
     }
 
+    async function _exportFavorites(anchorEl = null) {
+        try {
+            await exportLocalFavorites(api);
+            showToast("Exported favorites", "success", 1600, { anchor: anchorEl });
+        } catch (error) {
+            showToast(error?.message || "Could not export favorites", "error", 2400, { anchor: anchorEl });
+        }
+    }
+
+    async function _importFavorites(file, anchorEl = null) {
+        if (!file) return;
+        try {
+            _localFavorites = await importLocalFavorites(api, _localHeaders(), file);
+            _localFavoritesLoaded = true;
+            _rebuildFavoriteMap();
+            showToast("Imported favorites", "success", 1600, { anchor: anchorEl });
+            if (category === "favorites") await _renderFavorites({ preservePage: true });
+        } catch (error) {
+            showToast(error?.message || "Could not import favorites", "error", 2600, { anchor: anchorEl });
+        }
+    }
+
     async function _loadRemoteFavorites(force = false) {
         if (!_authConnected) {
             _remoteFavorites = [];
@@ -507,6 +818,106 @@ export const Browser = (() => {
         _remoteFavoritesLoaded = true;
         _rebuildFavoriteMap();
         return _remoteFavorites;
+    }
+
+    async function _loadGeneratedPreviews(force = false) {
+        if (_generatedLoaded && !force) return _generatedPreviews;
+        _generatedPreviews = await loadGeneratedPreviews(api);
+        _generatedLoaded = true;
+        return _generatedPreviews;
+    }
+
+    async function _syncGeneratedPreviews({ scanOutput = true } = {}) {
+        if (_generatedLoading) return _generatedPreviews;
+        await _ensureLocalToken();
+        _generatedLoading = true;
+        try {
+            const result = await scanGeneratedHistory(api, _localHeaders(), { scanOutput });
+            const previews = Array.isArray(result) ? result : result?.items;
+            if (Array.isArray(previews)) {
+                if (previews.length || result?.updated || !_generatedPreviews.length) {
+                    _generatedPreviews = previews;
+                }
+                _generatedLoaded = true;
+            }
+        } finally {
+            _generatedLoading = false;
+        }
+        return _generatedPreviews;
+    }
+
+    function _setGalleryExportProgress(value = 0, label = "Exporting...") {
+        const wrap = el?.querySelector("#anima-generated-export-progress");
+        const bar = el?.querySelector("#anima-generated-export-bar");
+        const text = el?.querySelector("#anima-generated-export-label");
+        if (!wrap || !bar || !text) return;
+        wrap.classList.remove("hidden");
+        text.textContent = label;
+        bar.style.width = `${Math.max(0, Math.min(100, Math.round(value * 100)))}%`;
+    }
+
+    async function _exportGeneratedGallery(includeImages = false, anchorEl = null) {
+        try {
+            _setGalleryExportProgress(.02, "Choose save location...");
+            await exportGeneratedGallery(api, {
+                includeImages,
+                onProgress: (value) => _setGalleryExportProgress(value, "Exporting gallery..."),
+            });
+            _setGalleryExportProgress(1, "Export complete");
+            setTimeout(() => el?.querySelector("#anima-generated-export-progress")?.classList.add("hidden"), 1400);
+            showToast(includeImages ? "Exported gallery zip" : "Exported gallery JSON", "success", 1600, { anchor: anchorEl });
+        } catch (error) {
+            el?.querySelector("#anima-generated-export-progress")?.classList.add("hidden");
+            if (error?.name === "AbortError") return;
+            showToast(error?.message || "Could not export gallery", "error", 2400, { anchor: anchorEl });
+        }
+    }
+
+    async function _importGeneratedGallery(file, anchorEl = null) {
+        if (!file) return;
+        try {
+            setGeneratedGalleryEnabled(true);
+            _generatedPreviews = await importGeneratedGallery(api, _localHeaders(), file);
+            _generatedLoaded = true;
+            showToast("Imported generated gallery", "success", 1600, { anchor: anchorEl });
+            if (category === "generated") await _renderGenerated({ preservePage: true });
+        } catch (error) {
+            showToast(error?.message || "Could not import gallery", "error", 2600, { anchor: anchorEl });
+        }
+    }
+
+    async function _removeGeneratedPreview(artist, anchorEl = null) {
+        if (!artist?.generatedImageUrl) return { ok: false };
+        const label = String(artist?.tag || "").replace(/_/g, " ");
+        if (!window.confirm(`Remove generated preview for @${label}? The image file will not be deleted.`)) {
+            return { ok: false };
+        }
+        try {
+            _generatedPreviews = await removeGeneratedPreview(api, _localHeaders(), artist?.tag || "");
+            _generatedLoaded = true;
+            showToast("Removed generated preview", "success", 1500, { anchor: anchorEl });
+            if (category === "generated") await _renderGenerated({ preservePage: true });
+            return { ok: true };
+        } catch (error) {
+            showToast(error?.message || "Could not remove preview", "error", 2400, { anchor: anchorEl });
+            return { ok: false };
+        }
+    }
+
+    async function _generateStyle(artist, anchorEl = null) {
+        if (!activeNode) {
+            alert("Open this browser from an Anima Style Explorer node first.");
+            return { ok: false };
+        }
+        const result = await onPick?.(artist, { mode: "style" });
+        if (result?.ok === false) {
+            alert(result.error || "Could not apply style.");
+            return result;
+        }
+        _refreshPromptPreview("Queued");
+        showToast(`Queued @${String(artist?.tag || "").replace(/_/g, " ")}`, "success", 1500, { anchor: anchorEl });
+        app.queuePrompt(0, 1);
+        return { ok: true };
     }
 
     async function _syncRemoteFavorite(post, favorited) {
@@ -589,11 +1000,15 @@ export const Browser = (() => {
             });
             _setRemoteFavoriteSyncPending(hasQueuedRemoteFavorites);
         } else {
-            const remoteResult = await _syncRemoteFavorite(post, nextState);
-            if (!remoteResult.ok) {
+            Promise.resolve().then(async () => {
+                const remoteResult = await _syncRemoteFavorite(post, nextState);
+                if (!remoteResult.ok) {
+                    _setRemoteFavoriteSyncPending(true);
+                    showToast("Saved locally. Fullet sync will retry later.", "error", 2200, { anchor: anchorEl });
+                }
+            }).catch(() => {
                 _setRemoteFavoriteSyncPending(true);
-                alert(remoteResult.error || "Could not sync account favorite.");
-            }
+            });
         }
 
         showToast(nextState ? "Added to favorites" : "Removed from favorites", "success", 1500, { anchor: anchorEl });
@@ -731,6 +1146,15 @@ export const Browser = (() => {
         promptEditor = el.querySelector("#anima-prompt-editor");
         promptStatus = el.querySelector("#anima-prompt-status");
         promptEditor?.addEventListener("input", _writePromptPreview);
+        el.querySelector("#anima-page-go")?.addEventListener("click", () => {
+            _jumpToPage(el.querySelector("#anima-page-input")?.value);
+        });
+        el.querySelector("#anima-page-input")?.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            _jumpToPage(event.currentTarget.value);
+        });
+        _bodyEl()?.addEventListener("scroll", _syncPageInput, { passive: true });
 
         attachBrowserEvents({
             el,
@@ -773,6 +1197,9 @@ export const Browser = (() => {
                 category = value;
             },
             setCategoryTabs: _setCategoryTabs,
+            getVisibleTabs: _getVisibleTabs,
+            setVisibleTabs: _updateVisibleTabs,
+            availableTabs: DEFAULT_VISIBLE_TABS,
             setObserver: (observer) => {
                 _observer = observer;
             },
@@ -788,6 +1215,35 @@ export const Browser = (() => {
                 await _openSwipe(startIndex);
             },
             loadLocalFavorites: _loadLocalFavorites,
+            isGeneratedGalleryEnabled,
+        });
+
+        const generatedImportMenuInput = el.querySelector("#anima-generated-import-menu-file");
+        el.querySelector("#anima-generated-import-menu")?.addEventListener("click", (event) => {
+            event.preventDefault();
+            generatedImportMenuInput?.click();
+        });
+        generatedImportMenuInput?.addEventListener("change", async (event) => {
+            await _importGeneratedGallery(event.currentTarget.files?.[0], el.querySelector("#anima-settings-gear"));
+            event.currentTarget.value = "";
+        });
+        el.querySelector("#anima-generated-export-menu")?.addEventListener("click", async (event) => {
+            event.preventDefault();
+            const includeImages = window.confirm("Export generated images too? Choose Cancel to export records only.");
+            await _exportGeneratedGallery(includeImages, event.currentTarget);
+        });
+        const favoritesImportMenuInput = el.querySelector("#anima-favorites-import-menu-file");
+        el.querySelector("#anima-favorites-import-menu")?.addEventListener("click", (event) => {
+            event.preventDefault();
+            favoritesImportMenuInput?.click();
+        });
+        favoritesImportMenuInput?.addEventListener("change", async (event) => {
+            await _importFavorites(event.currentTarget.files?.[0], el.querySelector("#anima-settings-gear"));
+            event.currentTarget.value = "";
+        });
+        el.querySelector("#anima-favorites-export-menu")?.addEventListener("click", async (event) => {
+            event.preventDefault();
+            await _exportFavorites(event.currentTarget);
         });
     }
 
@@ -812,10 +1268,23 @@ export const Browser = (() => {
                 if (String(item?.source_kind || "").toLowerCase() === "character") return;
                 highlight(item?.tag || "");
             },
+            onToggleFavorite: async (item, anchorEl = null) => {
+                if (isFulletLike(item)) {
+                    return await _toggleFulletFavorite(item, anchorEl);
+                }
+                return await _toggleStyleFavorite(item, anchorEl);
+            },
+            isFavorited: (item) => {
+                if (isFulletLike(item)) {
+                    return _isFavorited({ kind: "fullet", id: item?.id || item?.postId });
+                }
+                return _isFavorited({ kind: "style", tag: item?.tag });
+            },
             getImageUrl: (item) => {
                 if (isFulletLike(item)) {
                     return String(item?.fullImageUrl || _getFulletFullImageUrl(item) || "");
                 }
+                if (item?.generatedImageUrl) return String(item.generatedImageUrl || "");
                 if (item?.img_url && remoteImagesEnabled()) return String(item.img_url || "");
                 return thumbUrl(item, false);
             },
@@ -828,7 +1297,8 @@ export const Browser = (() => {
         });
     }
 
-    async function _renderFullet() {
+    async function _renderFullet(options = {}) {
+        options = _prepareRenderOptions(options);
         const id = ++_renderId;
         _detachFulletScrollHandler();
 
@@ -840,8 +1310,9 @@ export const Browser = (() => {
                 _safeSessionSet("anima_remote_enabled", "true");
                 _resetFulletPromptsFeed();
                 _remoteFavoritesLoaded = false;
-                await _render();
+                await _render(options);
             });
+            _updatePageJump(0, 40);
             return;
         }
 
@@ -855,12 +1326,13 @@ export const Browser = (() => {
         _updateFulletCount(list.length);
         _lastList = list.map((item) => _decorateFulletItem(item));
 
-        el.querySelector(".body").scrollTop = 0;
+        _restoreOrResetScroll(options);
 
         if (!list.length) {
             if (_observer) _observer.disconnect();
             const message = _fulletError || "No prompts found.";
             grid.innerHTML = `<div class="anima-empty"><span>${escapeHtml(message)}</span></div>`;
+            _updatePageJump(0, 40);
             if (_fulletHasMore) {
                 _bindFulletInfiniteScroll(id);
             }
@@ -876,10 +1348,13 @@ export const Browser = (() => {
             renderItem: (item) => _renderFulletCard(item),
         });
 
+        _updatePageJump(_lastList.length, 40);
+        _restoreOrResetScroll({ ...options, pageSize: 40 });
         _bindFulletInfiniteScroll(id);
     }
 
-    async function _renderFavorites() {
+    async function _renderFavorites(options = {}) {
+        options = _prepareRenderOptions(options);
         _detachFulletScrollHandler();
         const id = ++_renderId;
         grid.innerHTML = `<div class="anima-empty"><div class="anima-spinner"></div><span>Loading favorites...</span></div>`;
@@ -904,17 +1379,25 @@ export const Browser = (() => {
             remoteFavorites: _remoteFavorites,
             filter,
         });
+        await _loadGeneratedPreviews();
+        if (id !== _renderId) return;
+        const generatedFavorites = decorateGeneratedArtists(
+            list.filter((item) => !isFulletLike(item)),
+            _generatedPreviews
+        );
+        const generatedByTag = new Map(generatedFavorites.map((item) => [String(item?.tag || ""), item]));
 
         countEl.textContent = `${list.length} favorites`;
         _lastList = list.map((item) => (isFulletLike(item)
             ? { ...item, displayImageUrl: _getFulletDisplayImageUrl(item), fullImageUrl: _getFulletFullImageUrl(item) }
-            : item));
+            : (generatedByTag.get(String(item?.tag || "")) || item)));
 
-        el.querySelector(".body").scrollTop = 0;
+        _restoreOrResetScroll(options);
 
         if (!list.length) {
             if (_observer) _observer.disconnect();
             grid.innerHTML = `<div class="anima-empty"><span>No favorites yet.</span></div>`;
+            _updatePageJump(0, 60);
             return;
         }
 
@@ -929,13 +1412,72 @@ export const Browser = (() => {
                 return _card(item);
             },
         });
+        _updatePageJump(_lastList.length, 60);
+        _restoreOrResetScroll({ ...options, pageSize: 60 });
     }
 
-    async function _render() {
+    async function _renderGenerated(options = {}) {
+        options = _prepareRenderOptions(options);
         _detachFulletScrollHandler();
-        if (category === "fullet") return _renderFullet();
-        if (category === "favorites") return _renderFavorites();
+        const id = ++_renderId;
+        const enabled = isGeneratedGalleryEnabled();
+        if (!enabled) {
+            countEl.textContent = "generated gallery";
+            _lastList = [];
+            if (_observer) _observer.disconnect();
+            grid.innerHTML = `
+                <div class="anima-empty anima-generated-gate">
+                    <strong>Generated Gallery</strong>
+                    <span>This tab shows generated previews that were saved locally. Import and export tools live in the top-right gear menu.</span>
+                    <div class="anima-generated-actions">
+                        <button class="hdr-btn-txt" id="anima-generated-enable">Enable Generated Gallery</button>
+                    </div>
+                </div>
+            `;
+            _updatePageJump(0, 100);
+            _renderFooterTools();
+            grid.querySelector("#anima-generated-enable")?.addEventListener("click", async (event) => {
+                setGeneratedGalleryEnabled(true);
+                await _renderGenerated({ preservePage: true });
+                showToast("Generated Gallery enabled", "success", 1400, { anchor: event.currentTarget });
+            });
+            return;
+        }
 
+        grid.innerHTML = `<div class="anima-empty"><div class="anima-spinner"></div><span>Loading generated previews...</span></div>`;
+
+        const artists = await Data.all();
+        await _loadGeneratedPreviews();
+        if (id !== _renderId) return;
+
+        const list = buildGeneratedList(artists, _generatedPreviews, { sort, filter });
+        const filled = list.filter((item) => item.generatedImageUrl).length;
+        countEl.textContent = `${filled}/${list.length} generated`;
+        _lastList = list;
+
+        _restoreOrResetScroll(options);
+
+        renderChunkedGrid({
+            grid,
+            observer: _observer,
+            items: list,
+            chunkSize: 100,
+            minHeight: "400px",
+            renderItem: (item) => _card(item),
+        });
+        _updatePageJump(list.length, 100);
+        _restoreOrResetScroll({ ...options, pageSize: 100 });
+
+        _renderFooterTools();
+    }
+
+    async function _render(options = {}) {
+        _detachFulletScrollHandler();
+        if (category === "generated") return _renderGenerated(options);
+        if (category === "fullet") return _renderFullet(options);
+        if (category === "favorites") return _renderFavorites(options);
+
+        options = _prepareRenderOptions(options);
         const id = ++_renderId;
         grid.innerHTML = `<div class="anima-empty"><div class="anima-spinner"></div><span>Loading styles...</span></div>`;
         const animadexKind = _animadexKindForCategory();
@@ -955,7 +1497,7 @@ export const Browser = (() => {
             ? { ...item, displayImageUrl: _getFulletDisplayImageUrl(item), fullImageUrl: _getFulletFullImageUrl(item) }
             : item));
 
-        el.querySelector(".body").scrollTop = 0;
+        _restoreOrResetScroll(options);
 
         renderChunkedGrid({
             grid,
@@ -965,8 +1507,10 @@ export const Browser = (() => {
             minHeight: "400px",
             renderItem: (item) => _card(item),
         });
+        _updatePageJump(list.length, 100);
+        _restoreOrResetScroll({ ...options, pageSize: 100 });
 
-        if (!remoteImagesEnabled()) {
+        if (_remoteImagesRelevant() && !remoteImagesEnabled()) {
             const notice = document.createElement("div");
             notice.className = "anima-remote-notice";
             notice.innerHTML = `
@@ -978,7 +1522,9 @@ export const Browser = (() => {
     }
 
     function _card(artist) {
-        const url = thumbUrl(artist, false);
+        const url = category === "generated"
+            ? String(artist?.generatedImageUrl || "")
+            : (artist?.generatedImageUrl || thumbUrl(artist, false));
         const isUniq = sort === "uniqueness";
         const isFav = _isFavorited({ kind: "style", tag: artist.tag });
 
@@ -1006,14 +1552,21 @@ export const Browser = (() => {
                 highlight(selectedArtist.tag);
                 showToast(`Applied ${kind} @${displayTag}`, "success", 1500, { anchor: anchorEl });
             },
+            onGenerate: async (selectedArtist, anchorEl = null) => {
+                return await _generateStyle(selectedArtist, anchorEl);
+            },
             onToggleFavorite: async (selectedArtist, _btn, anchorEl = null) => {
                 return await _toggleStyleFavorite(selectedArtist, anchorEl);
+            },
+            onRemoveGenerated: async (selectedArtist, anchorEl = null) => {
+                return await _removeGeneratedPreview(selectedArtist, anchorEl);
             },
             onOpenSwipe: (selectedArtist) => {
                 const idx = _lastList.findIndex((x) => x.tag === selectedArtist.tag);
                 _openSwipe(idx >= 0 ? idx : 0);
             },
             getStyleSlots: () => getStylePromptSlots(activeNode),
+            editMode: false,
         });
     }
 
@@ -1064,7 +1617,7 @@ export const Browser = (() => {
     function cycleBtn() { return document.getElementById("anima-cycle-btn"); }
     function cycleStatus() { return document.getElementById("anima-cycle-status"); }
 
-    return { open, close, cycleBtn, cycleStatus, highlight };
+    return { open, close, cycleBtn, cycleStatus, highlight, syncGeneratedPreviews: _syncGeneratedPreviews };
 })();
 
 

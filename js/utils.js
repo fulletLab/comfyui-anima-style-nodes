@@ -116,13 +116,14 @@ export function setPromptValue(node, w, value, tag = "", kind = "") {
 function normalizeArtist(value = "") {
     const display = String(value || "")
         .replace(/^@+/, "")
+        .replace(/\\([()])/g, "$1")
         .replace(/_/g, " ")
         .replace(/\s+/g, " ")
         .trim();
     return {
         display,
         tag: display ? display.replace(/\s+/g, "_") : "",
-        token: display ? `@${display}` : "",
+        token: display ? `@${escapePromptParens(display)}` : "",
     };
 }
 
@@ -201,7 +202,7 @@ function looksStructuredPrompt(text = "") {
 
 export function injectTag(current, tag) {
     const text = String(current || "");
-    const spaceTag = tag ? tag.replace(/_/g, " ") : "";
+    const spaceTag = tag ? escapePromptParens(tag.replace(/_/g, " ")) : "";
 
     if (!spaceTag) {
         return text.replace(/(^|,\s*)@[^,\n]+(,\s*|$)/g, (_match, p1, p2) => p1 && p2 ? ", " : "").trim();
@@ -224,6 +225,12 @@ function styleDisplayTag(tag = "") {
         .trim();
 }
 
+function escapePromptParens(value = "") {
+    return String(value || "")
+        .replace(/\\([()])/g, "$1")
+        .replace(/[()]/g, "\\$&");
+}
+
 function splitPromptTagList(value = []) {
     const raw = Array.isArray(value) ? value : [value];
     return raw
@@ -239,7 +246,7 @@ function splitPromptTagList(value = []) {
 
 function stylePromptToken(tag = "") {
     const display = styleDisplayTag(tag);
-    return display ? `@${display}` : "";
+    return display ? `@${escapePromptParens(display)}` : "";
 }
 
 function promptParts(current = "") {

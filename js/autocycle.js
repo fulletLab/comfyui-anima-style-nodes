@@ -1,9 +1,12 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { Data } from "./data.js";
+import { normalizeGeneratedTag } from "./browser_generated.js";
 import { applyCharacterGroup, applyStyle, applyStyleGroup } from "./utils.js";
 
 const CONFIG_KEY = "anima_autocycle_config_v1";
+const STATE_KEY = "anima_autocycle_state_v1";
+const UNLIMITED_BATCH_COUNT = -1;
 const DEFAULT_CONFIG = {
     source: "styles",
     characterMode: "trigger",
@@ -12,7 +15,11 @@ const DEFAULT_CONFIG = {
     subject: "keep",
     repeats: 1,
     random: "uniform",
-    resume: false,
+    pickMode: "random",
+    recordBasis: "cycle",
+    batchCount: 20,
+    worksMin: "",
+    worksMax: "",
 };
 
 const SUBJECT_OPTIONS = new Set(["keep", "1girl", "1boy", "2girls", "2boys", "1girl, 1boy"]);
@@ -33,12 +40,43 @@ function readStoredConfig() {
     }
 }
 
+function readStoredState() {
+    try {
+        const state = JSON.parse(localStorage.getItem(STATE_KEY) || "{}");
+        return {
+            count: Math.max(0, Number.parseInt(state.count, 10) || 0),
+            usedKeys: Array.isArray(state.usedKeys) ? state.usedKeys.filter(Boolean).map(String) : [],
+        };
+    } catch {
+        return { count: 0, usedKeys: [] };
+    }
+}
+
+function saveStoredState({ count = 0, usedKeys = [] } = {}) {
+    try {
+        localStorage.setItem(STATE_KEY, JSON.stringify({
+            count: Math.max(0, Number.parseInt(count, 10) || 0),
+            usedKeys: Array.from(new Set(usedKeys.map(String).filter(Boolean))),
+        }));
+    } catch { }
+}
+
 function normalizeConfig(raw = {}) {
     const source = ["styles", "characters", "all"].includes(raw.source) ? raw.source : DEFAULT_CONFIG.source;
     const characterMode = raw.characterMode === "trigger-tags" ? "trigger-tags" : DEFAULT_CONFIG.characterMode;
     const random = raw.random === "weighted" ? "weighted" : DEFAULT_CONFIG.random;
+    const pickMode = raw.pickMode === "order" ? "order" : DEFAULT_CONFIG.pickMode;
+    const recordBasis = raw.recordBasis === "generated" ? "generated" : DEFAULT_CONFIG.recordBasis;
     const artistCount = Math.max(1, Math.min(6, Number.parseInt(raw.artistCount, 10) || DEFAULT_CONFIG.artistCount));
     const characterCount = Math.max(1, Math.min(6, Number.parseInt(raw.characterCount, 10) || DEFAULT_CONFIG.characterCount));
+    const rawBatchCount = Number.parseInt(raw.batchCount, 10);
+    const batchCount = rawBatchCount === UNLIMITED_BATCH_COUNT
+        ? UNLIMITED_BATCH_COUNT
+        : Math.max(1, Number.isFinite(rawBatchCount) ? rawBatchCount : DEFAULT_CONFIG.batchCount);
+    const worksMinValue = Number.parseInt(raw.worksMin, 10);
+    const worksMaxValue = Number.parseInt(raw.worksMax, 10);
+    const worksMin = Number.isFinite(worksMinValue) && worksMinValue >= 0 ? worksMinValue : "";
+    const worksMax = Number.isFinite(worksMaxValue) && worksMaxValue >= 0 ? worksMaxValue : "";
     const subject = SUBJECT_OPTIONS.has(String(raw.subject || "").trim().toLowerCase())
         ? String(raw.subject || "").trim().toLowerCase()
         : DEFAULT_CONFIG.subject;
@@ -51,7 +89,11 @@ function normalizeConfig(raw = {}) {
         subject,
         repeats,
         random,
-        resume: !!raw.resume,
+        pickMode,
+        recordBasis,
+        batchCount,
+        worksMin,
+        worksMax,
     };
 }
 
@@ -76,7 +118,9 @@ function itemKind(item) {
 }
 
 function itemKey(item) {
-    return `${itemKind(item)}:${String(item?.tag || "").trim().toLowerCase()}`;
+    const raw = String(item?.tag || "").trim();
+    const key = isCharacter(item) ? raw.toLowerCase() : normalizeGeneratedTag(raw);
+    return `${itemKind(item)}:${key}`;
 }
 
 function selectionKey(items = []) {
@@ -110,8 +154,23 @@ function itemWeight(item) {
     return Number.isFinite(raw) && raw > 0 ? raw : 1;
 }
 
+function itemWorks(item) {
+    const raw = Number(
+        item?.works
+        || item?.image_count
+        || item?.images
+        || item?.count
+        || item?.total
+        || 0
+    );
+    return Number.isFinite(raw) && raw >= 0 ? raw : 0;
+}
+
 function matchesSource(item, config) {
     if (!item) return false;
+    const works = itemWorks(item);
+    if (config.worksMin !== "" && works < Number(config.worksMin)) return false;
+    if (config.worksMax !== "" && works > Number(config.worksMax)) return false;
     if (config.source === "all") return true;
     if (config.source === "characters") return isCharacter(item);
     return !isCharacter(item);
@@ -159,6 +218,10 @@ export const AutoCycle = (() => {
     let _itemRuns = 0;
     let _manualNext = null;
     let _knownCharactersPromise = null;
+    let _usedKeys = new Set();
+    let _generatedKeysPromise = null;
+    let _syncGeneratedPreviews = null;
+    let _syncingGeneratedPreviews = false;
 
     function _clearState({ keepCount = false, keepInsertedParts = false } = {}) {
         _currentItem = null;
@@ -171,6 +234,19 @@ export const AutoCycle = (() => {
         _itemRuns = 0;
         _manualNext = null;
         if (!keepCount) _count = 0;
+        if (!keepCount) _usedKeys = new Set();
+    }
+
+    function _loadStoredProgress() {
+        const state = readStoredState();
+        _count = state.count;
+        _usedKeys = new Set(state.usedKeys);
+    }
+
+    function _clearStoredProgress() {
+        _clearState({ keepInsertedParts: true });
+        saveStoredState({ count: 0, usedKeys: [] });
+        setCycleStatus("records cleared", false);
     }
 
     async function _loadPool(config) {
@@ -204,6 +280,38 @@ export const AutoCycle = (() => {
         return result;
     }
 
+    async function _loadGeneratedStyleKeys({ force = false } = {}) {
+        if (_generatedKeysPromise && !force) return _generatedKeysPromise;
+        _generatedKeysPromise = (async () => {
+            try {
+                const response = await api.fetchApi("/anima/generated_previews?existing=1");
+                const data = await response.json().catch(() => ({}));
+                const items = Array.isArray(data?.items) ? data.items : [];
+                return new Set(items.map((item) => {
+                    const key = normalizeGeneratedTag(item?.artist || item?.tag);
+                    return key ? `style:${key}` : "";
+                }).filter(Boolean));
+            } catch {
+                return new Set();
+            }
+        })();
+        return _generatedKeysPromise;
+    }
+
+    async function _refreshGeneratedBasis(config) {
+        if (config.recordBasis !== "generated" || typeof _syncGeneratedPreviews !== "function") return;
+        if (_syncingGeneratedPreviews) return;
+        _syncingGeneratedPreviews = true;
+        try {
+            await _syncGeneratedPreviews({ scanOutput: false });
+            _generatedKeysPromise = null;
+        } catch (error) {
+            console.warn("[AnimaStyleExplorer] Could not refresh generated gallery before Auto Cycle pick", error);
+        } finally {
+            _syncingGeneratedPreviews = false;
+        }
+    }
+
     async function _knownCharacters() {
         if (!_knownCharactersPromise) {
             _knownCharactersPromise = Data.animadex("character").catch(() => []);
@@ -234,13 +342,16 @@ export const AutoCycle = (() => {
             let pool = source.filter((item) => (
                 item
                 && !isCharacter(item)
+                && matchesSource(item, config)
                 && !selectedKeys.has(itemKey(item))
             ));
             if (!pool.length) {
+                if (config.recordBasis === "generated") break;
                 const currentSelection = new Set(selected.map(itemKey));
                 pool = source.filter((item) => (
                     item
                     && !isCharacter(item)
+                    && matchesSource(item, config)
                     && !currentSelection.has(itemKey(item))
                 ));
             }
@@ -265,6 +376,7 @@ export const AutoCycle = (() => {
             let pool = source.filter((item) => (
                 item
                 && isCharacter(item)
+                && matchesSource(item, config)
                 && !selectedKeys.has(itemKey(item))
             ));
             if (!pool.length) {
@@ -272,6 +384,7 @@ export const AutoCycle = (() => {
                 pool = source.filter((item) => (
                     item
                     && isCharacter(item)
+                    && matchesSource(item, config)
                     && !currentSelection.has(itemKey(item))
                 ));
             }
@@ -287,27 +400,51 @@ export const AutoCycle = (() => {
     async function _pickNextSelection(config, excludeKeys = []) {
         const list = await _loadPool(config);
         const excluded = new Set(excludeKeys);
+        const generatedUsed = config.recordBasis === "generated"
+            ? await _loadGeneratedStyleKeys({ force: true })
+            : new Set();
+        const used = new Set([
+            ...(config.recordBasis === "generated" ? [] : _usedKeys),
+            ...generatedUsed,
+            ...excluded,
+        ]);
+
+        if (config.pickMode === "order" && config.source !== "characters") {
+            const orderedTags = Array.from(document.querySelectorAll("#anima-browser .anima-card[data-tag]"))
+                .map((card) => String(card.dataset.tag || "").trim().toLowerCase())
+                .filter(Boolean);
+            const byTag = new Map(list.map((item) => [String(item?.tag || "").trim().toLowerCase(), item]));
+            const orderedStyles = orderedTags
+                .map((tag) => byTag.get(tag))
+                .filter((item) => item && !isCharacter(item) && matchesSource(item, config));
+            const orderedCandidates = orderedStyles
+                .filter((item) => !used.has(itemKey(item)));
+            const orderedSeed = orderedCandidates[0] || list.find((item) => item && !isCharacter(item) && matchesSource(item, config) && !used.has(itemKey(item)));
+            if (!orderedSeed) return [];
+            return _styleGroupFromSeed(orderedSeed, config, list, [...used]);
+        }
 
         if (config.source === "all") {
             const styles = list.filter((item) => item && !isCharacter(item));
             const characters = list.filter((item) => item && isCharacter(item));
-            const stylePool = excluded.size && styles.length > 1
-                ? styles.filter((item) => !excluded.has(itemKey(item)))
+            const stylePool = (config.recordBasis === "generated" || (used.size && styles.length > 1))
+                ? styles.filter((item) => !used.has(itemKey(item)))
                 : styles;
-            const characterPool = excluded.size && characters.length > 1
-                ? characters.filter((item) => !excluded.has(itemKey(item)))
+            const characterPool = used.size && characters.length > 1
+                ? characters.filter((item) => !used.has(itemKey(item)))
                 : characters;
 
-            const styleSeed = pickRandom(stylePool.length ? stylePool : styles, config);
+            const styleSeed = pickRandom(stylePool.length ? stylePool : (config.recordBasis === "generated" ? [] : styles), config);
             const characterSeed = pickRandom(characterPool.length ? characterPool : characters, config);
             const styleGroup = await _styleGroupFromSeed(styleSeed, config, list, excludeKeys);
             const characterGroup = await _characterGroupFromSeed(characterSeed, config, list, excludeKeys);
             return [...styleGroup, ...characterGroup].filter(Boolean);
         }
 
-        const pool = excluded.size && list.length > 1
-            ? list.filter((item) => !excluded.has(itemKey(item)))
+        const pool = (config.recordBasis === "generated" || (used.size && list.length > 1))
+            ? list.filter((item) => !used.has(itemKey(item)))
             : list;
+        if (config.recordBasis === "generated" && !pool.length) return [];
         const first = pickRandom(pool.length ? pool : list, config);
         return isCharacter(first)
             ? _characterGroupFromSeed(first, config, list, excludeKeys)
@@ -365,6 +502,8 @@ export const AutoCycle = (() => {
         }
         _itemRuns = 1;
         _count++;
+        _currentItems.forEach((item) => _usedKeys.add(itemKey(item)));
+        saveStoredState({ count: _count, usedKeys: [..._usedKeys] });
 
         const repeatText = config.repeats > 1 ? ` (${_itemRuns}/${config.repeats})` : "";
         const kind = styleItems.length && characterItems.length
@@ -385,6 +524,7 @@ export const AutoCycle = (() => {
         if (!_currentItems.length) return false;
         _itemRuns++;
         _count++;
+        saveStoredState({ count: _count, usedKeys: [..._usedKeys] });
         setCycleStatus(`${_count} queued - ${selectionLabel(_currentItems)} (${_itemRuns}/${config.repeats})`, true);
         app.queuePrompt(0, 1);
         return true;
@@ -400,6 +540,12 @@ export const AutoCycle = (() => {
 
         try {
             const config = getConfig();
+            await _refreshGeneratedBasis(config);
+            if (config.batchCount !== UNLIMITED_BATCH_COUNT && _count >= config.batchCount) {
+                setCycleStatus(`batch complete - ${_count}/${config.batchCount}`, false);
+                stop();
+                return;
+            }
             if (_currentItems.length && !_selectionMatchesConfig(_currentItems, config)) {
                 _clearState({ keepCount: true, keepInsertedParts: true });
             }
@@ -434,8 +580,9 @@ export const AutoCycle = (() => {
     function start(node) {
         if (_running) return;
         const config = getConfig();
-        if (!config.resume || (_currentItems.length && !_selectionMatchesConfig(_currentItems, config))) {
-            _clearState({ keepInsertedParts: true });
+        _loadStoredProgress();
+        if (_currentItems.length && !_selectionMatchesConfig(_currentItems, config)) {
+            _clearState({ keepCount: true, keepInsertedParts: true });
         }
         _running = true;
         _node = node;
@@ -458,7 +605,6 @@ export const AutoCycle = (() => {
 
     function stop() {
         if (!_running) return;
-        const config = getConfig();
         _running = false;
         if (_handler) {
             api.removeEventListener("status", _handler);
@@ -471,9 +617,7 @@ export const AutoCycle = (() => {
             btn.querySelector(".btn-lbl").textContent = "Play";
         }
         setCycleStatus(`stopped after ${_count}`, false);
-        if (!config.resume) {
-            _clearState({ keepCount: true, keepInsertedParts: true });
-        }
+        saveStoredState({ count: _count, usedKeys: [..._usedKeys] });
     }
 
     function toggle(node) {
@@ -529,28 +673,65 @@ export const AutoCycle = (() => {
     function bindControls(root = document) {
         const host = root || document;
         if (host._animaCycleControlsBound) return;
-        const sourceEl = host.querySelector?.("#anima-cycle-source");
+        const stylesEnabledEl = host.querySelector?.("#anima-cycle-enable-styles");
+        const charactersEnabledEl = host.querySelector?.("#anima-cycle-enable-characters");
         const modeEl = host.querySelector?.("#anima-cycle-character-mode");
         const artistsEl = host.querySelector?.("#anima-cycle-artists");
         const charactersEl = host.querySelector?.("#anima-cycle-characters");
         const subjectEl = host.querySelector?.("#anima-cycle-subject");
         const repeatsEl = host.querySelector?.("#anima-cycle-repeats");
-        const randomEl = host.querySelector?.("#anima-cycle-random");
-        const resumeEl = host.querySelector?.("#anima-cycle-resume");
+        const pickModeEl = host.querySelector?.("#anima-cycle-pick-mode");
+        const recordBasisEl = host.querySelector?.("#anima-cycle-record-basis");
+        const batchCountEl = host.querySelector?.("#anima-cycle-batch-count");
+        const worksMinEl = host.querySelector?.("#anima-cycle-works-min");
+        const worksMaxEl = host.querySelector?.("#anima-cycle-works-max");
+        const clearRecordsBtn = host.querySelector?.("#anima-cycle-clear-records");
         const settingsBtn = host.querySelector?.("#anima-cycle-settings");
         const settingsPanel = host.querySelector?.("#anima-cycle-settings-panel");
         const settingsClose = host.querySelector?.("#anima-cycle-settings-close");
-        if (!sourceEl || !modeEl || !artistsEl || !charactersEl || !subjectEl || !repeatsEl || !randomEl || !resumeEl) return;
+        if (!stylesEnabledEl || !charactersEnabledEl || !modeEl || !artistsEl || !charactersEl || !subjectEl || !repeatsEl || !pickModeEl || !recordBasisEl || !batchCountEl || !worksMinEl || !worksMaxEl || !clearRecordsBtn) return;
 
         const config = getConfig();
-        sourceEl.value = config.source;
+        stylesEnabledEl.checked = config.source === "styles" || config.source === "all";
+        charactersEnabledEl.checked = config.source === "characters" || config.source === "all";
         modeEl.value = config.characterMode;
         artistsEl.value = String(config.artistCount);
         charactersEl.value = String(config.characterCount);
         subjectEl.value = config.subject;
         repeatsEl.value = String(config.repeats);
-        randomEl.value = config.random;
-        resumeEl.checked = config.resume;
+        pickModeEl.value = config.pickMode === "order" ? "order" : `random-${config.random}`;
+        recordBasisEl.value = config.recordBasis;
+        batchCountEl.value = String(config.batchCount);
+        worksMinEl.value = config.worksMin === "" ? "" : String(config.worksMin);
+        worksMaxEl.value = config.worksMax === "" ? "" : String(config.worksMax);
+
+        const selectedSource = () => {
+            if (!stylesEnabledEl.checked && !charactersEnabledEl.checked) {
+                stylesEnabledEl.checked = true;
+            }
+            if (stylesEnabledEl.checked && charactersEnabledEl.checked) return "all";
+            return charactersEnabledEl.checked ? "characters" : "styles";
+        };
+
+        const syncRotateState = () => {
+            const stylesOn = stylesEnabledEl.checked;
+            const charactersOn = charactersEnabledEl.checked;
+            artistsEl.disabled = !stylesOn;
+            artistsEl.closest?.(".cycle-stepper")?.querySelectorAll("button").forEach((button) => { button.disabled = !stylesOn; });
+            artistsEl.closest?.(".cycle-control")?.classList.toggle("cycle-control-disabled", !stylesOn);
+            charactersEl.disabled = !charactersOn;
+            charactersEl.closest?.(".cycle-stepper")?.querySelectorAll("button").forEach((button) => { button.disabled = !charactersOn; });
+            charactersEl.closest?.(".cycle-control")?.classList.toggle("cycle-control-disabled", !charactersOn);
+            modeEl.disabled = !charactersOn;
+            modeEl.closest?.(".cycle-control")?.classList.toggle("cycle-control-disabled", !charactersOn);
+        };
+
+        const pickModeConfig = () => {
+            if (pickModeEl.value === "order") return { pickMode: "order", random: config.random };
+            if (pickModeEl.value === "random-weighted") return { pickMode: "random", random: "weighted" };
+            return { pickMode: "random", random: "uniform" };
+        };
+        syncRotateState();
 
         const closePanel = () => {
             settingsPanel?.classList.add("hidden");
@@ -590,23 +771,41 @@ export const AutoCycle = (() => {
         });
 
         const persist = () => {
+            const pick = pickModeConfig();
             saveConfig({
-                source: sourceEl.value,
+                source: selectedSource(),
                 characterMode: modeEl.value,
                 artistCount: artistsEl.value,
                 characterCount: charactersEl.value,
                 subject: subjectEl.value,
                 repeats: repeatsEl.value,
-                random: randomEl.value,
-                resume: resumeEl.checked,
+                random: pick.random,
+                pickMode: pick.pickMode,
+                recordBasis: recordBasisEl.value,
+                batchCount: batchCountEl.value,
+                worksMin: worksMinEl.value,
+                worksMax: worksMaxEl.value,
             });
         };
 
-        [sourceEl, modeEl, artistsEl, charactersEl, subjectEl, repeatsEl, randomEl, resumeEl].forEach((control) => {
+        [stylesEnabledEl, charactersEnabledEl, modeEl, artistsEl, charactersEl, subjectEl, repeatsEl, pickModeEl, recordBasisEl, batchCountEl, worksMinEl, worksMaxEl].forEach((control) => {
             control.addEventListener("change", persist);
             control.addEventListener("input", persist);
         });
+        [stylesEnabledEl, charactersEnabledEl].forEach((control) => {
+            control.addEventListener("change", syncRotateState);
+            control.addEventListener("input", syncRotateState);
+        });
+        clearRecordsBtn.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            _clearStoredProgress();
+        });
         host._animaCycleControlsBound = true;
+    }
+
+    function setGeneratedSyncHandler(handler) {
+        _syncGeneratedPreviews = typeof handler === "function" ? handler : null;
     }
 
     return {
@@ -614,6 +813,7 @@ export const AutoCycle = (() => {
         stop,
         inject,
         bindControls,
+        setGeneratedSyncHandler,
         getConfig,
         get running() { return _running; },
     };

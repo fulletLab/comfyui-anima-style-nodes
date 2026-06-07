@@ -9,12 +9,15 @@ export const Swipe = (() => {
     let nextImg = null;
     let titleEl = null;
     let counterEl = null;
+    let favoriteBtn = null;
 
     let _list = [];
     let _index = 0;
     let _onApply = null;
+    let _onToggleFavorite = null;
     let _getImageUrl = null;
     let _getTitle = null;
+    let _isFavorited = null;
 
     let _keyHandler = null;
     const _preloaded = new Set();
@@ -33,14 +36,17 @@ export const Swipe = (() => {
             <div class="swipe-header">
                 <span class="swipe-counter" id="anima-swipe-counter"></span>
                 <span class="swipe-title" id="anima-swipe-title"></span>
-                <button class="swipe-close" id="anima-swipe-close" title="Close">&#10005;</button>
+                <div class="swipe-actions">
+                    <button class="swipe-favorite" id="anima-swipe-favorite" title="Toggle favorite">Favorite</button>
+                    <button class="swipe-close" id="anima-swipe-close" title="Close">&#10005;</button>
+                </div>
             </div>
             <div class="swipe-container" id="anima-swipe-container">
                 <img class="swipe-image swipe-image--prev" id="anima-swipe-prev" alt="" loading="eager"/>
                 <img class="swipe-image swipe-image--current" id="anima-swipe-current" alt="" loading="eager"/>
                 <img class="swipe-image swipe-image--next" id="anima-swipe-next" alt="" loading="eager"/>
             </div>
-            <div class="swipe-hint">&#8592;/&#8594; navigate &#183; Enter apply &#183; C copy &#183; Esc close</div>
+            <div class="swipe-hint">&#8592;/&#8594; navigate &#183; Enter apply &#183; F favorite &#183; C copy &#183; Esc close</div>
         `;
         document.body.appendChild(el);
 
@@ -50,9 +56,15 @@ export const Swipe = (() => {
         nextImg = el.querySelector("#anima-swipe-next");
         titleEl = el.querySelector("#anima-swipe-title");
         counterEl = el.querySelector("#anima-swipe-counter");
+        favoriteBtn = el.querySelector("#anima-swipe-favorite");
 
         el.querySelector(".backdrop").addEventListener("click", close);
         el.querySelector("#anima-swipe-close").addEventListener("click", close);
+        favoriteBtn?.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            _toggleFavorite();
+        });
 
         prevImg.addEventListener("click", (e) => { e.stopPropagation(); _navigate(-1); });
         nextImg.addEventListener("click", (e) => { e.stopPropagation(); _navigate(1); });
@@ -85,6 +97,40 @@ export const Swipe = (() => {
         const item = _getItem(_index);
         if (!item) return;
         try { _onApply?.(item); } catch (_) { }
+    }
+
+    async function _toggleFavorite() {
+        const item = _getItem(_index);
+        if (!item || typeof _onToggleFavorite !== "function") return;
+        if (favoriteBtn) favoriteBtn.disabled = true;
+        try {
+            const res = await _onToggleFavorite(item, favoriteBtn);
+            if (res?.ok && typeof res.favorited === "boolean") {
+                item._swipeFavorited = res.favorited;
+            }
+        } catch (_) {
+        } finally {
+            if (favoriteBtn) favoriteBtn.disabled = false;
+            _syncFavoriteButton();
+        }
+    }
+
+    function _favoriteState(item) {
+        if (!item) return false;
+        if (typeof item._swipeFavorited === "boolean") return item._swipeFavorited;
+        if (typeof _isFavorited === "function") return !!_isFavorited(item);
+        return false;
+    }
+
+    function _syncFavoriteButton() {
+        if (!favoriteBtn) return;
+        const item = _getItem(_index);
+        const enabled = !!item && typeof _onToggleFavorite === "function";
+        const favorited = _favoriteState(item);
+        el?.classList.toggle("favorited", favorited);
+        favoriteBtn.style.display = enabled ? "inline-flex" : "none";
+        favoriteBtn.classList.toggle("active", favorited);
+        favoriteBtn.textContent = favorited ? "Unfavorite" : "Favorite";
     }
 
     function _navigate(delta) {
@@ -145,6 +191,7 @@ export const Swipe = (() => {
         const title = _titleFor(cur);
         titleEl.textContent = title ? `@${title}` : "";
         counterEl.textContent = `${_index + 1} / ${len}`;
+        _syncFavoriteButton();
 
         // Re-trigger animation
         container?.classList.remove("swipe-transition");
@@ -176,6 +223,10 @@ export const Swipe = (() => {
                 navigator.clipboard?.writeText?.(`@${title}`).catch(() => { });
                 break;
             }
+            case "KeyF":
+                e.preventDefault(); e.stopPropagation();
+                _toggleFavorite();
+                break;
             case "Escape":
                 e.preventDefault(); e.stopPropagation();
                 close();
@@ -183,13 +234,15 @@ export const Swipe = (() => {
         }
     }
 
-    function open({ list, startIndex = 0, onApply, getImageUrl, getTitle } = {}) {
+    function open({ list, startIndex = 0, onApply, onToggleFavorite, isFavorited, getImageUrl, getTitle } = {}) {
         _build();
         if (!Array.isArray(list) || list.length === 0) return;
 
         _list = list;
         _index = _normalizeIndex(startIndex, _list.length);
         _onApply = onApply ?? null;
+        _onToggleFavorite = onToggleFavorite ?? null;
+        _isFavorited = isFavorited ?? null;
         _getImageUrl = getImageUrl ?? null;
         _getTitle = getTitle ?? null;
         _preloaded.clear();
@@ -213,6 +266,8 @@ export const Swipe = (() => {
         el?.classList.add("hidden");
         _list = [];
         _onApply = null;
+        _onToggleFavorite = null;
+        _isFavorited = null;
         _getImageUrl = null;
         _getTitle = null;
         _preloaded.clear();

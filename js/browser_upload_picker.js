@@ -367,7 +367,7 @@ function normalizeHistoryEntries(payload) {
     }));
 }
 
-function buildUploadItems(historyPayload) {
+export function buildUploadItems(historyPayload, { limit = MAX_UPLOAD_ITEMS } = {}) {
     const entries = normalizeHistoryEntries(historyPayload);
     const items = [];
 
@@ -424,7 +424,7 @@ function buildUploadItems(historyPayload) {
             seen.add(key);
             return true;
         })
-        .slice(0, MAX_UPLOAD_ITEMS);
+        .slice(0, Math.max(0, Number(limit) || MAX_UPLOAD_ITEMS));
 }
 
 function buildArtistLookup(artists = []) {

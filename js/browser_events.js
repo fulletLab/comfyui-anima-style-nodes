@@ -23,9 +23,13 @@ export function attachBrowserEvents({
     setSort,
     setCategory,
     setCategoryTabs,
+    getVisibleTabs,
+    setVisibleTabs,
+    availableTabs,
     setObserver,
     openSwipeFromHighlighted,
     loadLocalFavorites,
+    isGeneratedGalleryEnabled,
 }) {
     const onlineToggle = el.querySelector("#anima-online-toggle");
     if (localStorage.getItem("anima_remote_images_opt_in_v1") === null) {
@@ -38,7 +42,7 @@ export function attachBrowserEvents({
     onlineToggle.checked = localStorage.getItem("anima_online") === "true";
     onlineToggle.addEventListener("change", (e) => {
         localStorage.setItem("anima_online", e.target.checked);
-        render();
+        render({ preservePage: true });
     });
 
     const animadexToggle = el.querySelector("#anima-animadex-source");
@@ -61,11 +65,28 @@ export function attachBrowserEvents({
         return includeAnimadex ? "/anima/update?animadex=1" : "/anima/update";
     };
 
-    const keepSessionToggle = el.querySelector("#anima-keep-session");
-    if (localStorage.getItem("anima_keep_session") === null) {
-        localStorage.setItem("anima_keep_session", "false");
-    }
-    keepSessionToggle.checked = localStorage.getItem("anima_keep_session") === "true";
+    const syncVisibleTabInputs = () => {
+        const visible = new Set(getVisibleTabs?.() || []);
+        el.querySelectorAll("[data-tab-toggle]").forEach((input) => {
+            input.checked = visible.has(input.dataset.tabToggle);
+        });
+    };
+
+    const collectVisibleTabInputs = () => {
+        const selected = [];
+        el.querySelectorAll("[data-tab-toggle]").forEach((input) => {
+            if (input.checked) selected.push(input.dataset.tabToggle);
+        });
+        return selected.length ? selected : [availableTabs?.[0] || "all"];
+    };
+
+    syncVisibleTabInputs();
+    el.querySelectorAll("[data-tab-toggle]").forEach((input) => {
+        input.addEventListener("change", async () => {
+            await setVisibleTabs?.(collectVisibleTabInputs());
+            syncVisibleTabInputs();
+        });
+    });
 
     const keyModal = el.querySelector("#anima-key-modal");
     const keyPanel = el.querySelector("#anima-key-panel");
@@ -117,7 +138,7 @@ export function attachBrowserEvents({
             },
             body: JSON.stringify({
                 apiKey,
-                persistent: !!keepSessionToggle.checked,
+                persistent: true,
             }),
         });
         const payload = await response.json().catch(() => ({}));
@@ -156,21 +177,9 @@ export function attachBrowserEvents({
         close();
     };
 
-    keepSessionToggle.addEventListener("change", async (e) => {
-        const enabled = !!e.target.checked;
-        localStorage.setItem("anima_keep_session", enabled ? "true" : "false");
-        try {
-            await syncSessionMode(enabled);
-        } catch (err) {
-            alert(err?.message || "Could not update session mode.");
-        }
-        await refreshAuthStatus({ syncPending: false });
-        if (getCategory() === "favorites") await renderFavorites();
-    });
-
     el.querySelector("#anima-fullet-connect").addEventListener("click", async () => {
         try {
-            await syncSessionMode(keepSessionToggle.checked);
+            await syncSessionMode(true);
             openKeyModal();
         } catch (err) {
             alert(err?.message || "Could not open API key modal.");
@@ -270,20 +279,27 @@ export function attachBrowserEvents({
     el.querySelector("#anima-refresh").addEventListener("click", async (e) => {
         const btn = e.currentTarget;
         const oldHtml = btn.innerHTML;
+        const renderInPlace = () => render({ preservePage: true });
         btn.innerHTML = `<div class="anima-spinner" style="width:14px;height:14px;border-width:2px"></div>`;
         btn.style.pointerEvents = "none";
         try {
             if (getCategory() === "fullet") {
                 setFulletLoaded(false);
                 await api.fetchApi("/anima/fullet_prompts?limit=1&offset=0&force=1");
-                await render();
+                await renderInPlace();
+            } else if (getCategory() === "generated") {
+                if (typeof isGeneratedGalleryEnabled === "function" && !isGeneratedGalleryEnabled()) {
+                    await renderInPlace();
+                    return;
+                }
+                await renderInPlace();
             } else {
                 const resp = await api.fetchApi(updateStylesUrl(), { method: "POST", headers: localHeaders() });
                 const res = await resp.json();
                 if (res.success) {
                     dataReset();
                     setFulletLoaded(false);
-                    await render();
+                    await renderInPlace();
                 }
             }
         } catch { }
@@ -333,11 +349,6 @@ export function attachBrowserEvents({
         render();
     });
 
-    const swipeBtn = el.querySelector("#anima-swipe-btn");
-    swipeBtn?.addEventListener("click", async () => {
-        await openSwipeFromHighlighted();
-    });
-
     el.querySelector("#anima-cat-all").addEventListener("click", () => {
         setCategory("all");
         setCategoryTabs();
@@ -354,6 +365,12 @@ export function attachBrowserEvents({
         setCategory("animadex-characters");
         setCategoryTabs();
         render();
+    });
+
+    el.querySelector("#anima-cat-generated").addEventListener("click", async () => {
+        setCategory("generated");
+        setCategoryTabs();
+        await render();
     });
 
     el.querySelector("#anima-cat-fullet").addEventListener("click", async () => {

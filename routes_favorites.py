@@ -5,11 +5,9 @@ from datetime import datetime, timezone
 
 from aiohttp import web
 
-from . import artist_data
-
 BASE_DIR = os.path.dirname(__file__)
 LOCAL_FAVORITES_FILE = os.path.join(BASE_DIR, "data", "favorites.json")
-MAX_LOCAL_FAVORITES = int(os.getenv("ANIMA_MAX_LOCAL_FAVORITES", "2000"))
+MAX_LOCAL_FAVORITES = int(os.getenv("ANIMA_MAX_LOCAL_FAVORITES", "-1"))
 
 _favorites_lock = threading.Lock()
 
@@ -181,16 +179,12 @@ def _upsert_local_favorite(item):
     if not entry:
         return None
 
-    if entry.get("kind") == "style" and entry.get("id"):
-        entry["localPreviewCached"] = bool(entry.get("localPreviewCached") or artist_data.ensure_image_cached(entry))
-
-    max_items = max(100, MAX_LOCAL_FAVORITES)
     with _favorites_lock:
         items = _read_local_favorites_locked()
         items = [x for x in items if str(x.get("key") or "") != entry.get("key")]
         items.append(entry)
-        if len(items) > max_items:
-            items = items[-max_items:]
+        if MAX_LOCAL_FAVORITES > 0 and len(items) > MAX_LOCAL_FAVORITES:
+            items = items[-MAX_LOCAL_FAVORITES:]
         _write_local_favorites_locked(items)
     return entry
 
@@ -233,6 +227,28 @@ def list_style_favorites():
     return sorted(tags)
 
 
+def export_favorites_payload():
+    return {
+        "animaFavoritesVersion": 1,
+        "exportedAt": _now_iso(),
+        "items": list_local_favorites(),
+    }
+
+
+def import_favorites_payload(payload):
+    raw_items = payload.get("items") if isinstance(payload, dict) else []
+    if not isinstance(raw_items, list):
+        raw_items = []
+
+    imported = 0
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        if _upsert_local_favorite(item):
+            imported += 1
+    return {"ok": True, "imported": imported, "items": list_local_favorites()}
+
+
 def register_favorite_routes(server, require_local_token):
     @server.instance.routes.get("/anima/custom_styles")
     async def get_custom_styles(request):
@@ -241,6 +257,10 @@ def register_favorite_routes(server, require_local_token):
     @server.instance.routes.get("/anima/favorites")
     async def get_favorites(request):
         return web.json_response({"items": list_local_favorites()})
+
+    @server.instance.routes.get("/anima/favorites/export")
+    async def export_favorites(request):
+        return web.json_response(export_favorites_payload())
 
     @server.instance.routes.post("/anima/favorites")
     async def mutate_favorites(request):
@@ -263,6 +283,9 @@ def register_favorite_routes(server, require_local_token):
             with _favorites_lock:
                 _write_local_favorites_locked([])
             return web.json_response({"ok": True, "items": []})
+
+        if action == "import":
+            return web.json_response(import_favorites_payload(body))
 
         if action == "remove":
             changed = _remove_local_favorite(key=str(body.get("key") or ""), item=item)

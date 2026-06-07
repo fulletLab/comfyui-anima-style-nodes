@@ -63,6 +63,43 @@ export async function mutateLocalFavorites(api, headers, payload) {
     }
 }
 
+function timestampForFilename() {
+    return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function exportLocalFavorites(api) {
+    const response = await api.fetchApi("/anima/favorites/export");
+    if (!response.ok) {
+        throw new Error(`Favorites export failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    downloadBlob(blob, `anima-favorites-${timestampForFilename()}.json`);
+}
+
+export async function importLocalFavorites(api, headers, file) {
+    if (!file) return [];
+    const payload = JSON.parse(await file.text());
+    const result = await mutateLocalFavorites(api, headers, {
+        action: "import",
+        items: Array.isArray(payload?.items) ? payload.items : [],
+    });
+    if (!result.ok) {
+        throw new Error(result.error || "Favorites import failed");
+    }
+    return result.items;
+}
+
 export async function loadRemoteFavorites(api, { limit = 96, offset = 0 } = {}) {
     try {
         const r = await api.fetchApi(`/anima/fullet_favorites?limit=${limit}&offset=${offset}`);

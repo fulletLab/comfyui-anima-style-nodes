@@ -156,7 +156,8 @@ export function createFulletCard({
     onOpenSwipe,
 }) {
     const card = document.createElement("div");
-    card.className = "anima-fullet-card";
+    card.className = `anima-fullet-card ${isFav ? "favorited" : ""}`;
+    card.dataset.animaAnchor = `fullet:${String(post?.id || post?.postId || post?.postUrl || "")}`;
 
     const artist = String(post?.artist || "").replace(/_/g, " ").trim();
     const user = String(post?.username || "").trim();
@@ -199,6 +200,7 @@ export function createFulletCard({
         const res = await onToggleFavorite?.(post, favBtn, mediaEl || favBtn);
         if (res?.ok && typeof res.favorited === "boolean") {
             favBtn.textContent = res.favorited ? "Unfavorite" : "Favorite";
+            card.classList.toggle("favorited", res.favorited);
         }
     });
 
@@ -209,7 +211,13 @@ export function createFulletCard({
         onOpenSwipe?.(post);
     });
 
-    card.addEventListener("click", () => onApply?.(post, "both", mediaEl || card));
+    card.addEventListener("click", () => {
+        if (imageUrl) {
+            onOpenSwipe?.(post);
+            return;
+        }
+        onApply?.(post, "both", mediaEl || card);
+    });
     return card;
 }
 
@@ -219,13 +227,17 @@ export function createStyleCard({
     isUniq = false,
     isFav = false,
     onApply,
+    onGenerate,
     onToggleFavorite,
+    onRemoveGenerated,
     onOpenSwipe,
     getStyleSlots,
+    editMode = false,
 }) {
     const card = document.createElement("div");
-    card.className = "anima-card";
+    card.className = `anima-card ${isFav ? "favorited" : ""}`;
     card.dataset.tag = artist.tag;
+    card.dataset.animaAnchor = `style:${String(artist?.tag || "")}`;
 
     const rankHtml = isUniq && artist.uniquenessRank
         ? `<div class="anima-uniqueness-rank" title="Uniqueness score: ${Number(artist.uniqueness_score || 0).toFixed(2)}">#${artist.uniquenessRank}</div>`
@@ -249,7 +261,9 @@ export function createStyleCard({
           `
         : `
                 <button class="anima-card-pick" data-apply="style">Apply Style</button>
+                <button class="anima-card-pick anima-card-generate" data-generate="style">Generate</button>
                 <button class="anima-card-fav" data-favorite="toggle">${isFav ? "Unfavorite" : "Favorite"}</button>
+                ${editMode && artist?.generatedImageUrl ? `<button class="anima-card-remove-generated" data-remove-generated="1">Remove Preview</button>` : ""}
           `;
     const tagsPreview = isCharacter && Array.isArray(artist?.tags) && artist.tags.length
         ? `<span class="anima-card-tags-preview" title="${escapeHtml(artist.tags.join(", "))}">${escapeHtml(artist.tags.slice(0, 4).join(", "))}${artist.tags.length > 4 ? "..." : ""}</span>`
@@ -303,16 +317,52 @@ export function createStyleCard({
         showStyleActionMenu(mediaEl, artist, pick, getStyleSlots);
     }));
 
+    card.querySelectorAll("[data-generate]").forEach((btn) => btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        const oldText = btn.textContent;
+        btn.textContent = "Queued";
+        try {
+            await onGenerate?.(artist, mediaEl || btn);
+        } finally {
+            if (btn.isConnected) {
+                btn.disabled = false;
+                btn.textContent = oldText;
+            }
+        }
+    }));
+
     const favBtn = card.querySelector("[data-favorite='toggle']");
     favBtn?.addEventListener("click", async (e) => {
         e.stopPropagation();
         const res = await onToggleFavorite?.(artist, favBtn, mediaEl || favBtn);
         if (res?.ok && typeof res.favorited === "boolean") {
             favBtn.textContent = res.favorited ? "Unfavorite" : "Favorite";
+            card.classList.toggle("favorited", res.favorited);
+        }
+    });
+
+    const removeGeneratedBtn = card.querySelector("[data-remove-generated]");
+    removeGeneratedBtn?.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        removeGeneratedBtn.disabled = true;
+        const oldText = removeGeneratedBtn.textContent;
+        removeGeneratedBtn.textContent = "Removing";
+        try {
+            await onRemoveGenerated?.(artist, mediaEl || removeGeneratedBtn);
+        } finally {
+            if (removeGeneratedBtn.isConnected) {
+                removeGeneratedBtn.disabled = false;
+                removeGeneratedBtn.textContent = oldText;
+            }
         }
     });
 
     card.addEventListener("click", () => {
+        if (imageUrl) {
+            onOpenSwipe?.(artist);
+            return;
+        }
         if (isCharacter) {
             showCharacterActionMenu(mediaEl, artist, "trigger", pick);
             return;

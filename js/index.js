@@ -179,6 +179,7 @@ async function openStyleBrowser(node) {
         const browser = mod?.Browser;
         if (!browser) throw new Error("Browser module unavailable");
         browser.open((artist, options) => AutoCycle.inject(node, artist, options), node);
+        AutoCycle.setGeneratedSyncHandler?.((options) => browser.syncGeneratedPreviews?.(options));
         AutoCycle.bindControls?.(document.getElementById("anima-browser"));
         const cycleBtn = browser.cycleBtn?.();
         if (cycleBtn) {
