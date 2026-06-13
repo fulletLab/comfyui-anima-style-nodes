@@ -36,13 +36,15 @@ export function injectCSS() {
 #anima-browser .top-search-tools { display:flex; align-items:center; gap:7px; flex:0 0 auto; min-width:0; max-width:none; }
 #anima-browser .cycle-bar { display:flex; align-items:center; gap:8px; padding:8px 14px; border-bottom:1px solid #202436; background:#111420; flex-shrink:0; box-shadow:inset 0 1px 0 rgba(255,255,255,.035); flex-wrap:wrap; }
 #anima-browser .cycle-label { font-size:10.5px; color:#c0c0d0; font-family:'JetBrains Mono',monospace; white-space:nowrap; }
-.anima-play-btn { display:flex; align-items:center; gap:5px; min-height:25px; padding:4px 10px; border-radius:6px; cursor:pointer; font-family:'Inter',sans-serif; font-size:11px; font-weight:600; border:1px solid #1e3020; background:#121a12; color:#70a070; transition:all .15s; white-space:nowrap; }
+.anima-play-btn { display:flex; align-items:center; justify-content:center; width:29px; min-height:27px; padding:4px 0; border-radius:6px; cursor:pointer; font-family:'Inter',sans-serif; font-size:11px; font-weight:600; border:1px solid #1e3020; background:#121a12; color:#70a070; transition:all .15s; white-space:nowrap; }
 .anima-play-btn:hover { background:#162016; border-color:#2a4030; color:#90c090; }
 .anima-play-btn.running { background:#1e1010; border-color:#4a2020; color:#a05060; }
+.anima-play-btn .btn-lbl { display:none; }
+.anima-play-btn .btn-icon { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; flex:0 0 16px; font-size:13px; line-height:1; }
 .cycle-settings-wrap { position:relative; display:flex; align-items:center; }
 .cycle-settings-btn { width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:7px; border:1px solid #27304a; background:#0e1220; color:#aab6df; cursor:pointer; font-size:13px; transition:all .12s; }
 .cycle-settings-btn:hover, .cycle-settings-btn.active { background:#18213a; border-color:#52689c; color:#eef3ff; }
-.cycle-settings-panel { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:min(680px, calc(100vw - 32px)); max-height:calc(100vh - 44px); overflow:auto; padding:14px; border-radius:12px; border:1px solid #334265; background:linear-gradient(180deg,#111827,#090e1a); box-shadow:0 28px 74px rgba(0,0,0,.62), 0 0 0 9999px rgba(3,6,12,.6); z-index:90; }
+.cycle-settings-panel { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); width:min(680px, calc(100vw - 32px)); max-height:calc(100vh - 44px); overflow:auto; padding:14px; border-radius:12px; border:1px solid #334265; background:linear-gradient(180deg,#111827,#090e1a); box-shadow:0 28px 74px rgba(0,0,0,.62), 0 0 0 9999px rgba(3,6,12,.6); z-index:90; box-sizing:border-box; }
 .cycle-settings-panel.hidden { display:none; }
 .cycle-settings-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #202b43; }
 .cycle-settings-head div { display:flex; flex-direction:column; gap:3px; }
@@ -58,7 +60,7 @@ export function injectCSS() {
 #anima-browser .cycle-settings-grid .cycle-control input { grid-column:2; grid-row:1; justify-self:start; width:154px; max-width:154px; min-height:28px; }
 #anima-browser .cycle-settings-grid .cycle-control small { grid-column:1 / -1; grid-row:2; color:#8fa1c8; font-size:9.3px; line-height:1.2; }
 #anima-browser .cycle-settings-grid .cycle-check { min-height:50px; align-items:center; justify-content:flex-start; }
-.anima-cycle-status { flex:0 1 92px; max-width:92px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10.5px; color:#a0a0bc; font-family:'JetBrains Mono',monospace; }
+.anima-cycle-status { flex:0 0 auto; max-width:none; overflow:visible; white-space:nowrap; font-size:10.5px; color:#a0a0bc; font-family:'JetBrains Mono',monospace; }
 .anima-cycle-status.active { color:#a0c0a0; }
 #anima-browser .cycle-control { display:inline-flex; align-items:center; gap:5px; min-height:28px; padding:3px 6px; border:1px solid #27304a; border-radius:7px; background:#0e1220; color:#8794ba; font-size:9.5px; font-weight:600; }
 #anima-browser .cycle-control span, #anima-browser .cycle-check span { color:#9aa8cf; font-size:9.5px; white-space:nowrap; }
@@ -134,6 +136,17 @@ export function injectCSS() {
     #anima-browser .cycle-settings-grid .cycle-control { grid-template-columns:126px minmax(0, 1fr); }
 }
 @media (max-width: 520px) {
+    #anima-browser .hdr { flex-wrap:wrap; align-content:flex-start; gap:6px; padding:8px; }
+    #anima-browser .hdr-tabs { order:6; flex:1 0 100%; width:100%; margin-left:0; }
+    #anima-browser .top-cycle-bar { order:1; }
+    #anima-browser .top-search-tools { order:2; flex:1 1 136px; min-width:132px; }
+    #anima-browser .top-search-tools .anima-sort-select { flex:1 1 92px; width:92px; min-width:0; }
+    #anima-browser #anima-fullet-connect,
+    #anima-browser #anima-fullet-disconnect,
+    #anima-browser #anima-fullet-upload { order:3; padding:6px 7px; font-size:9px; }
+    #anima-browser .hdr-data-btns { order:4; margin-left:0; padding-left:0; }
+    #anima-browser .hdr > .hdr-close { order:5; margin-left:auto !important; }
+    #anima-browser .hdr-settings-menu { position:fixed; right:12px; left:auto; top:68px; width:min(204px, calc(100vw - 24px)); max-width:calc(100vw - 24px); max-height:calc(100vh - 92px); overflow:auto; }
     #anima-browser .cycle-settings-panel { width:calc(100vw - 24px); padding:14px; }
     #anima-browser .cycle-settings-grid { grid-template-columns:1fr; }
     #anima-browser .cycle-settings-grid .cycle-control { grid-template-columns:1fr; }

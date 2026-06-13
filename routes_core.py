@@ -4,13 +4,45 @@ import tempfile
 
 from aiohttp import web
 
-from . import artist_data
-from .generated_previews import GeneratedPreviewStore
+try:
+    from . import artist_data
+    from .generated_previews import GeneratedPreviewStore
+except ImportError:
+    import artist_data
+    from generated_previews import GeneratedPreviewStore
 
 try:
     import folder_paths
 except Exception:
     folder_paths = None
+
+
+def _env_flag(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def resolve_scan_output_directory(folder_path="", default_output_dir=None, allow_custom_paths=None):
+    if allow_custom_paths is None:
+        allow_custom_paths = _env_flag("ANIMA_ALLOW_CUSTOM_SCAN_PATHS", False)
+
+    requested = str(folder_path or "").strip()
+    default_dir = str(default_output_dir or "").strip()
+
+    if requested:
+        if not allow_custom_paths:
+            return None, "Custom scan folders are disabled"
+        output_dir = os.path.abspath(os.path.expanduser(requested))
+    elif default_dir:
+        output_dir = os.path.abspath(os.path.expanduser(default_dir))
+    else:
+        return None, "No output directory available"
+
+    if not os.path.isdir(output_dir):
+        return None, "Scan folder does not exist"
+    return output_dir, None
 
 
 def register_core_routes(server, require_local_token=None):
@@ -182,16 +214,14 @@ def register_core_routes(server, require_local_token=None):
         max_files = max(1, min(max_files, 10000))
 
         folder_path = str(body.get("folderPath") or request.query.get("folder_path") or "").strip()
-        if folder_path:
-            output_dir = os.path.abspath(os.path.expanduser(folder_path))
-            if not os.path.isdir(output_dir):
-                return web.json_response({"error": "Scan folder does not exist"}, status=400)
-        elif folder_paths is not None:
-            output_dir = folder_paths.get_output_directory()
-        else:
+        default_output_dir = folder_paths.get_output_directory() if folder_paths is not None else None
+        output_dir, path_error = resolve_scan_output_directory(folder_path, default_output_dir=default_output_dir)
+        if path_error == "No output directory available":
             return web.json_response({"items": generated_store.load()["items"], "scanned": 0, "matched": 0})
+        if path_error:
+            return web.json_response({"error": path_error}, status=400)
 
-        view_output_dir = folder_paths.get_output_directory() if folder_paths is not None else output_dir
+        view_output_dir = default_output_dir if default_output_dir else output_dir
         return web.json_response(generated_store.scan_output_directory(
             output_dir,
             max_files=max_files,

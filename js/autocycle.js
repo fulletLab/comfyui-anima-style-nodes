@@ -695,7 +695,7 @@ export const AutoCycle = (() => {
         const btn = cycleBtn();
         if (btn) {
             btn.classList.add("running");
-            btn.querySelector(".btn-icon").innerHTML = "&#9646;&#9646;";
+            btn.querySelector(".btn-icon").textContent = "⏸️";
             btn.querySelector(".btn-lbl").textContent = "Stop";
         }
         setCycleStatus("starting...", true);
@@ -713,7 +713,7 @@ export const AutoCycle = (() => {
         const btn = cycleBtn();
         if (btn) {
             btn.classList.remove("running");
-            btn.querySelector(".btn-icon").innerHTML = "&#9654;";
+            btn.querySelector(".btn-icon").textContent = "▶️";
             btn.querySelector(".btn-lbl").textContent = "Play";
         }
         setCycleStatus(`stopped after ${_recordCount(config)}`, false);

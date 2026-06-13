@@ -15,7 +15,7 @@
                     <div class="top-cycle-bar">
                         <span class="cycle-label">Cycle</span>
                         <button class="anima-play-btn" id="anima-cycle-btn">
-                            <span class="btn-icon">&#9654;</span>
+                            <span class="btn-icon" aria-hidden="true">▶️</span>
                             <span class="btn-lbl">Play</span>
                         </button>
                         <div class="cycle-settings-wrap">
