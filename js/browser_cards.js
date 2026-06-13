@@ -154,9 +154,12 @@ export function createFulletCard({
     onApply,
     onToggleFavorite,
     onOpenSwipe,
+    selectionMode = false,
+    selected = false,
+    onSelectToggle,
 }) {
     const card = document.createElement("div");
-    card.className = `anima-fullet-card ${isFav ? "favorited" : ""}`;
+    card.className = `anima-fullet-card ${isFav ? "favorited" : ""} ${selectionMode ? "selecting" : ""} ${selected ? "multi-selected" : ""}`;
     card.dataset.animaAnchor = `fullet:${String(post?.id || post?.postId || post?.postUrl || "")}`;
 
     const artist = String(post?.artist || "").replace(/_/g, " ").trim();
@@ -167,6 +170,7 @@ export function createFulletCard({
     card.innerHTML = `
         <div class="anima-fullet-img" data-init="${escapeHtml((artist[0] || "?").toUpperCase())}">
             ${imageUrl ? `<img loading="lazy" decoding="async" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(artist)}" onerror="this.style.display='none';this.parentElement.classList.add('no-img')"/>` : ""}
+            ${selectionMode ? `<button class="anima-card-select-toggle" type="button" aria-pressed="${selected ? "true" : "false"}">${selected ? "Selected" : "Select"}</button>` : ""}
         </div>
         <div class="anima-fullet-meta">
             <span class="anima-fullet-artist" title="@${escapeHtml(artist)}">@${escapeHtml(artist)}</span>
@@ -186,6 +190,21 @@ export function createFulletCard({
     `;
 
     const mediaEl = card.querySelector(".anima-fullet-img");
+    const toggleSelection = () => {
+        const next = onSelectToggle?.(post, card);
+        if (typeof next !== "boolean") return;
+        card.classList.toggle("multi-selected", next);
+        const selectBtn = card.querySelector(".anima-card-select-toggle");
+        if (selectBtn) {
+            selectBtn.textContent = next ? "Selected" : "Select";
+            selectBtn.setAttribute("aria-pressed", next ? "true" : "false");
+        }
+    };
+
+    card.querySelector(".anima-card-select-toggle")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleSelection();
+    });
 
     card.querySelectorAll("[data-apply]").forEach((btn) => {
         btn.addEventListener("click", (e) => {
@@ -212,6 +231,10 @@ export function createFulletCard({
     });
 
     card.addEventListener("click", () => {
+        if (selectionMode) {
+            toggleSelection();
+            return;
+        }
         if (imageUrl) {
             onOpenSwipe?.(post);
             return;
@@ -233,9 +256,12 @@ export function createStyleCard({
     onOpenSwipe,
     getStyleSlots,
     editMode = false,
+    selectionMode = false,
+    selected = false,
+    onSelectToggle,
 }) {
     const card = document.createElement("div");
-    card.className = `anima-card ${isFav ? "favorited" : ""}`;
+    card.className = `anima-card ${isFav ? "favorited" : ""} ${selectionMode ? "selecting" : ""} ${selected ? "multi-selected" : ""}`;
     card.dataset.tag = artist.tag;
     card.dataset.animaAnchor = `style:${String(artist?.tag || "")}`;
 
@@ -277,6 +303,7 @@ export function createStyleCard({
         <div class="anima-card-img ${fitClass} ${imageUrl ? "" : "no-img"}" data-init="${escapeHtml((artist.tag?.[0] || "?").toUpperCase())}">
             ${imageHtml}
             ${rankHtml}
+            ${selectionMode ? `<button class="anima-card-select-toggle" type="button" aria-pressed="${selected ? "true" : "false"}">${selected ? "Selected" : "Select"}</button>` : ""}
             <div class="anima-card-overlay">
                 ${overlayButtons}
             </div>
@@ -290,6 +317,21 @@ export function createStyleCard({
     `;
 
     const mediaEl = card.querySelector(".anima-card-img");
+    const toggleSelection = () => {
+        const next = onSelectToggle?.(artist, card);
+        if (typeof next !== "boolean") return;
+        card.classList.toggle("multi-selected", next);
+        const selectBtn = card.querySelector(".anima-card-select-toggle");
+        if (selectBtn) {
+            selectBtn.textContent = next ? "Selected" : "Select";
+            selectBtn.setAttribute("aria-pressed", next ? "true" : "false");
+        }
+    };
+
+    card.querySelector(".anima-card-select-toggle")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleSelection();
+    });
 
     card.addEventListener("mouseenter", () => {
         if (!imageUrl) return;
@@ -359,6 +401,10 @@ export function createStyleCard({
     });
 
     card.addEventListener("click", () => {
+        if (selectionMode) {
+            toggleSelection();
+            return;
+        }
         if (imageUrl) {
             onOpenSwipe?.(artist);
             return;

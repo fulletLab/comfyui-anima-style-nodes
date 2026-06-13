@@ -182,10 +182,30 @@ function sourceLabel(config) {
     return "Styles";
 }
 
+function compactCycleStatus(text) {
+    const value = String(text || "").trim();
+    const generatedMatch = value.match(/^(\d+)\s+records\s+-\s+generated gallery$/i);
+    if (generatedMatch) return `${compactCount(generatedMatch[1])} gen`;
+    return value
+        .replace(/^(\d+)\s+records\s+-\s+/i, (_, count) => `${compactCount(count)} - `)
+        .replace(/\bgenerated gallery\b/ig, "generated")
+        .replace(/\bAuto Cycle\b/g, "Cycle");
+}
+
+function compactCount(value) {
+    const count = Number.parseInt(value, 10);
+    if (!Number.isFinite(count)) return String(value || "");
+    if (count >= 1000000) return `${(count / 1000000).toFixed(count >= 10000000 ? 0 : 1).replace(/\.0$/, "")}m`;
+    if (count >= 1000) return `${(count / 1000).toFixed(count >= 10000 ? 1 : 0).replace(/\.0$/, "")}k`;
+    return String(count);
+}
+
 function setCycleStatus(text, active = false) {
     const status = cycleStatus();
     if (!status) return;
-    status.textContent = text;
+    const fullText = String(text || "");
+    status.textContent = compactCycleStatus(fullText);
+    status.title = fullText;
     status.classList.toggle("active", active);
 }
 
@@ -222,6 +242,10 @@ export const AutoCycle = (() => {
     let _generatedKeysPromise = null;
     let _syncGeneratedPreviews = null;
     let _syncingGeneratedPreviews = false;
+    let _stoppedGeneratedSyncHandler = null;
+    let _stoppedGeneratedSyncTimer = null;
+    let _generatedRecordCount = 0;
+    let _startupProgressChecked = false;
 
     function _clearState({ keepCount = false, keepInsertedParts = false } = {}) {
         _currentItem = null;
@@ -241,6 +265,14 @@ export const AutoCycle = (() => {
         const state = readStoredState();
         _count = state.count;
         _usedKeys = new Set(state.usedKeys);
+    }
+
+    function _clearCycleProgressOnStartup(config = getConfig()) {
+        if (_startupProgressChecked) return;
+        _startupProgressChecked = true;
+        if (config.recordBasis === "generated") return;
+        _clearState({ keepInsertedParts: true });
+        saveStoredState({ count: 0, usedKeys: [] });
     }
 
     function _clearStoredProgress() {
@@ -287,15 +319,28 @@ export const AutoCycle = (() => {
                 const response = await api.fetchApi("/anima/generated_previews?existing=1");
                 const data = await response.json().catch(() => ({}));
                 const items = Array.isArray(data?.items) ? data.items : [];
-                return new Set(items.map((item) => {
+                const keys = new Set(items.map((item) => {
                     const key = normalizeGeneratedTag(item?.artist || item?.tag);
                     return key ? `style:${key}` : "";
                 }).filter(Boolean));
+                _generatedRecordCount = keys.size;
+                return keys;
             } catch {
+                _generatedRecordCount = 0;
                 return new Set();
             }
         })();
         return _generatedKeysPromise;
+    }
+
+    async function _setGeneratedRecordsStatus({ force = false } = {}) {
+        const keys = await _loadGeneratedStyleKeys({ force });
+        _generatedRecordCount = keys.size;
+        return _generatedRecordCount;
+    }
+
+    function _recordCount(config) {
+        return config.recordBasis === "generated" ? _generatedRecordCount : _count;
     }
 
     async function _refreshGeneratedBasis(config) {
@@ -305,11 +350,56 @@ export const AutoCycle = (() => {
         try {
             await _syncGeneratedPreviews({ scanOutput: false });
             _generatedKeysPromise = null;
+            await _setGeneratedRecordsStatus({ force: true });
         } catch (error) {
             console.warn("[AnimaStyleExplorer] Could not refresh generated gallery before Auto Cycle pick", error);
         } finally {
             _syncingGeneratedPreviews = false;
         }
+    }
+
+    function _cancelStoppedGeneratedSync() {
+        if (_stoppedGeneratedSyncHandler) {
+            api.removeEventListener("status", _stoppedGeneratedSyncHandler);
+            _stoppedGeneratedSyncHandler = null;
+        }
+        if (_stoppedGeneratedSyncTimer) {
+            clearTimeout(_stoppedGeneratedSyncTimer);
+            _stoppedGeneratedSyncTimer = null;
+        }
+    }
+
+    function _scheduleStoppedGeneratedSync() {
+        if (typeof _syncGeneratedPreviews !== "function") return;
+        _cancelStoppedGeneratedSync();
+
+        const runSync = () => {
+            _cancelStoppedGeneratedSync();
+            _stoppedGeneratedSyncTimer = setTimeout(async () => {
+                _stoppedGeneratedSyncTimer = null;
+                try {
+                    setCycleStatus("stopped - syncing final generated image", false);
+                    await _syncGeneratedPreviews({ scanOutput: true });
+                    _generatedKeysPromise = null;
+                    await _setGeneratedRecordsStatus({ force: true });
+                    setCycleStatus(`stopped after ${_recordCount(getConfig())}`, false);
+                } catch (error) {
+                    console.warn("[AnimaStyleExplorer] Could not sync final generated image after Auto Cycle stopped", error);
+                }
+            }, 450);
+        };
+
+        const queueRemaining = Number(app?.ui?.lastQueueSize ?? 0);
+        if (queueRemaining <= 0) {
+            runSync();
+            return;
+        }
+
+        _stoppedGeneratedSyncHandler = (event) => {
+            const remaining = Number(event?.detail?.exec_info?.queue_remaining ?? app?.ui?.lastQueueSize ?? 0);
+            if (remaining <= 0) runSync();
+        };
+        api.addEventListener("status", _stoppedGeneratedSyncHandler);
     }
 
     async function _knownCharacters() {
@@ -505,6 +595,9 @@ export const AutoCycle = (() => {
         _currentItems.forEach((item) => _usedKeys.add(itemKey(item)));
         saveStoredState({ count: _count, usedKeys: [..._usedKeys] });
 
+        if (config.recordBasis === "generated") {
+            await _setGeneratedRecordsStatus({ force: true });
+        }
         const repeatText = config.repeats > 1 ? ` (${_itemRuns}/${config.repeats})` : "";
         const kind = styleItems.length && characterItems.length
             ? `${styleItems.length} artist${styleItems.length === 1 ? "" : "s"} + ${characterItems.length} character${characterItems.length === 1 ? "" : "s"}`
@@ -515,7 +608,7 @@ export const AutoCycle = (() => {
                     : isCharacter(first)
                         ? (characterMode === "trigger-tags" ? "character tags" : "character")
                         : "style";
-        setCycleStatus(`${_count} queued - ${kind} ${selectionLabel(_currentItems)}${repeatText}`, true);
+        setCycleStatus(`${_recordCount(config)} records - ${kind} ${selectionLabel(_currentItems)}${repeatText}`, true);
         app.queuePrompt(0, 1);
         return result;
     }
@@ -525,7 +618,7 @@ export const AutoCycle = (() => {
         _itemRuns++;
         _count++;
         saveStoredState({ count: _count, usedKeys: [..._usedKeys] });
-        setCycleStatus(`${_count} queued - ${selectionLabel(_currentItems)} (${_itemRuns}/${config.repeats})`, true);
+        setCycleStatus(`${_recordCount(config)} records - ${selectionLabel(_currentItems)} (${_itemRuns}/${config.repeats})`, true);
         app.queuePrompt(0, 1);
         return true;
     }
@@ -541,8 +634,12 @@ export const AutoCycle = (() => {
         try {
             const config = getConfig();
             await _refreshGeneratedBasis(config);
-            if (config.batchCount !== UNLIMITED_BATCH_COUNT && _count >= config.batchCount) {
-                setCycleStatus(`batch complete - ${_count}/${config.batchCount}`, false);
+            if (config.recordBasis === "generated") {
+                await _setGeneratedRecordsStatus();
+            }
+            const records = _recordCount(config);
+            if (config.batchCount !== UNLIMITED_BATCH_COUNT && records >= config.batchCount) {
+                setCycleStatus(`batch complete - ${records}/${config.batchCount}`, false);
                 stop();
                 return;
             }
@@ -579,7 +676,9 @@ export const AutoCycle = (() => {
 
     function start(node) {
         if (_running) return;
+        _cancelStoppedGeneratedSync();
         const config = getConfig();
+        _clearCycleProgressOnStartup(config);
         _loadStoredProgress();
         if (_currentItems.length && !_selectionMatchesConfig(_currentItems, config)) {
             _clearState({ keepCount: true, keepInsertedParts: true });
@@ -610,14 +709,16 @@ export const AutoCycle = (() => {
             api.removeEventListener("status", _handler);
             _handler = null;
         }
+        const config = getConfig();
         const btn = cycleBtn();
         if (btn) {
             btn.classList.remove("running");
             btn.querySelector(".btn-icon").innerHTML = "&#9654;";
             btn.querySelector(".btn-lbl").textContent = "Play";
         }
-        setCycleStatus(`stopped after ${_count}`, false);
+        setCycleStatus(`stopped after ${_recordCount(config)}`, false);
         saveStoredState({ count: _count, usedKeys: [..._usedKeys] });
+        _scheduleStoppedGeneratedSync();
     }
 
     function toggle(node) {
@@ -692,6 +793,14 @@ export const AutoCycle = (() => {
         if (!stylesEnabledEl || !charactersEnabledEl || !modeEl || !artistsEl || !charactersEl || !subjectEl || !repeatsEl || !pickModeEl || !recordBasisEl || !batchCountEl || !worksMinEl || !worksMaxEl || !clearRecordsBtn) return;
 
         const config = getConfig();
+        _clearCycleProgressOnStartup(config);
+        if (config.recordBasis === "generated") {
+            _setGeneratedRecordsStatus({ force: true })
+                .then((count) => {
+                    if (!_running) setCycleStatus(`${count} records - generated gallery`, false);
+                })
+                .catch(() => { });
+        }
         stylesEnabledEl.checked = config.source === "styles" || config.source === "all";
         charactersEnabledEl.checked = config.source === "characters" || config.source === "all";
         modeEl.value = config.characterMode;
@@ -771,8 +880,9 @@ export const AutoCycle = (() => {
         });
 
         const persist = () => {
+            const previous = getConfig();
             const pick = pickModeConfig();
-            saveConfig({
+            const nextConfig = saveConfig({
                 source: selectedSource(),
                 characterMode: modeEl.value,
                 artistCount: artistsEl.value,
@@ -786,6 +896,15 @@ export const AutoCycle = (() => {
                 worksMin: worksMinEl.value,
                 worksMax: worksMaxEl.value,
             });
+            if (previous.recordBasis === "generated" && nextConfig.recordBasis !== "generated") {
+                _clearStoredProgress();
+            } else if (nextConfig.recordBasis === "generated") {
+                _setGeneratedRecordsStatus({ force: true })
+                    .then((count) => {
+                        if (!_running) setCycleStatus(`${count} records - generated gallery`, false);
+                    })
+                    .catch(() => { });
+            }
         };
 
         [stylesEnabledEl, charactersEnabledEl, modeEl, artistsEl, charactersEl, subjectEl, repeatsEl, pickModeEl, recordBasisEl, batchCountEl, worksMinEl, worksMaxEl].forEach((control) => {
@@ -799,6 +918,12 @@ export const AutoCycle = (() => {
         clearRecordsBtn.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
+            if (getConfig().recordBasis === "generated") {
+                _setGeneratedRecordsStatus({ force: true })
+                    .then((count) => setCycleStatus(`${count} records - generated gallery`, false))
+                    .catch(() => setCycleStatus("generated gallery records unavailable", false));
+                return;
+            }
             _clearStoredProgress();
         });
         host._animaCycleControlsBound = true;

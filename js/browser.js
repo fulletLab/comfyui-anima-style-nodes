@@ -13,7 +13,7 @@ import {
     buildFavoritesList,
     exportLocalFavorites,
     importLocalFavorites,
-    loadLocalFavorites as fetchLocalFavorites,
+    loadLocalFavoritesPayload,
     loadRemoteFavorites as fetchRemoteFavorites,
     mutateLocalFavorites as sendLocalFavoriteMutation,
     rebuildFavoriteMap,
@@ -50,7 +50,7 @@ export const Browser = (() => {
     const FULLET_PROMPTS_PAGE_SIZE = 48;
     const FULLET_PROMPTS_SCROLL_MARGIN = 960;
     let _fulletPosts = [], _fulletLoaded = false, _fulletNextOffset = 0, _fulletHasMore = true, _fulletLoading = false, _fulletLoadPromise = null, _fulletScrollHandler = null, _fulletError = "";
-    let _localFavorites = [], _localFavoritesLoaded = false;
+    let _localFavorites = [], _favoriteCategories = [], _localFavoritesLoaded = false;
     let _generatedPreviews = [], _generatedLoaded = false, _generatedLoading = false;
     let _remoteFavorites = [], _remoteFavoritesLoaded = false;
     let _favoriteMap = new Map();
@@ -59,6 +59,11 @@ export const Browser = (() => {
     let _remoteEnabled = false;
     let _remoteFavoriteSyncPromise = null;
     let _lastPageTotal = 1;
+    let _favoriteCategoryFilter = "__all__";
+    let _multiSelectMode = false;
+    const _selectedFavoriteItems = new Map();
+    const PROMPT_COLLAPSED_KEY = "anima_prompt_preview_collapsed_v1";
+    const SEARCH_OPEN_KEY = "anima_search_open_v1";
     const TAB_CONFIG_KEY = "anima_visible_tabs_v1";
     const DEFAULT_VISIBLE_TABS = ["all", "animadex-styles", "animadex-characters", "generated", "fullet", "favorites"];
     const TAB_BUTTONS = [
@@ -317,6 +322,294 @@ export const Browser = (() => {
         return true;
     }
 
+    function _favoriteCategoryName(value) {
+        return String(value || "").trim().replace(/\s+/g, " ").slice(0, 80);
+    }
+
+    function _categorySelectOptions({ includeAll = false, selected = "" } = {}) {
+        const options = includeAll ? [{ value: "__all__", label: "All Favorites" }] : [];
+        options.push({ value: "", label: "Uncategorized" });
+        const seen = new Set([""]);
+        for (const categoryItem of _favoriteCategories) {
+            const name = _favoriteCategoryName(categoryItem?.name);
+            if (!name || seen.has(name.toLowerCase())) continue;
+            seen.add(name.toLowerCase());
+            options.push({ value: name, label: name });
+        }
+        return options.map((option) => {
+            const isSelected = option.value === selected;
+            return `<option value="${escapeHtml(option.value)}" ${isSelected ? "selected" : ""}>${escapeHtml(option.label)}</option>`;
+        }).join("");
+    }
+
+    function _selectionKeyForFavoriteItem(item) {
+        if (isFulletLike(item)) {
+            return favoriteKeyFromItem({ kind: "fullet", id: item?.id || item?.postId });
+        }
+        const key = favoriteKeyFromItem({ kind: "style", tag: item?.tag });
+        return key || `style:${String(item?.tag || "")}`;
+    }
+
+    function _clearFavoriteSelection() {
+        _selectedFavoriteItems.clear();
+    }
+
+    function _isSelectableGalleryCategory(value = category) {
+        return value === "all" || value === "generated" || value === "favorites" || _isAnimadexCategory(value);
+    }
+
+    function _toggleSelectedFavoriteItem(item) {
+        const key = _selectionKeyForFavoriteItem(item);
+        if (!key) return false;
+        if (_selectedFavoriteItems.has(key)) {
+            _selectedFavoriteItems.delete(key);
+            _syncSelectionToolbar();
+            return false;
+        }
+        _selectedFavoriteItems.set(key, item);
+        _syncSelectionToolbar();
+        return true;
+    }
+
+    function _syncSelectionToolbar() {
+        const toolbar = el?.querySelector(".anima-favorite-bulk-toolbar");
+        if (!toolbar) return;
+        const count = _selectedFavoriteItems.size;
+        const countEl = toolbar.querySelector("[data-selection-count]");
+        if (countEl) countEl.textContent = `${count} selected`;
+        toolbar.querySelectorAll("[data-selection-requires-items]").forEach((node) => {
+            node.disabled = count <= 0;
+        });
+    }
+
+    async function _createFavoriteCategory(defaultName = "") {
+        const name = _favoriteCategoryName(window.prompt("Category name", defaultName));
+        if (!name) return "";
+        const result = await _mutateLocalFavorites({ action: "category_upsert", name });
+        if (!result.ok) {
+            showToast(result.error || "Could not create category", "error", 2400, { anchor: el?.querySelector("#anima-settings-gear") });
+            return "";
+        }
+        _favoriteCategories = Array.isArray(result.categories) ? result.categories : _favoriteCategories;
+        return name;
+    }
+
+    async function _batchAssignSelectedFavorites(categoryName, anchorEl = null) {
+        const items = [..._selectedFavoriteItems.values()]
+            .map((item) => isFulletLike(item) ? localFavoriteFromFullet(item) : localFavoriteFromStyle(item))
+            .filter(Boolean);
+        if (!items.length) return;
+        await _assignFavoriteCategoryItems(items, categoryName, anchorEl);
+        _clearFavoriteSelection();
+        if (category === "favorites") await _renderFavorites({ preservePage: true });
+        else await _render({ preservePage: true });
+    }
+
+    async function _assignFavoriteCategoryItems(items = [], categoryName = "", anchorEl = null) {
+        const result = await _mutateLocalFavorites({
+            action: "batch_assign",
+            category: _favoriteCategoryName(categoryName),
+            items,
+        });
+        if (!result.ok) {
+            showToast(result.error || "Could not assign favorites", "error", 2600, { anchor: anchorEl });
+            return;
+        }
+        const label = _favoriteCategoryName(categoryName) || "Uncategorized";
+        showToast(`Added ${items.length} to ${label}`, "success", 1700, { anchor: anchorEl });
+    }
+
+    function _favoriteCategoryOptionsForSwipe() {
+        const options = [{ value: "", label: "Uncategorized" }];
+        const seen = new Set([""]);
+        for (const categoryItem of _favoriteCategories) {
+            const name = _favoriteCategoryName(categoryItem?.name);
+            if (!name || seen.has(name.toLowerCase())) continue;
+            seen.add(name.toLowerCase());
+            options.push({ value: name, label: name });
+        }
+        return options;
+    }
+
+    function _favoriteCategoryForItem(item) {
+        const key = _selectionKeyForFavoriteItem(item);
+        const known = key ? _favoriteMap.get(key) : null;
+        return _favoriteCategoryName(known?.category || item?.category || "");
+    }
+
+    async function _setFavoriteCategoryForItem(item, categoryName = "", anchorEl = null) {
+        const entry = isFulletLike(item) ? localFavoriteFromFullet(item) : localFavoriteFromStyle(item);
+        if (!entry) return { ok: false };
+        entry.category = _favoriteCategoryName(categoryName);
+        await _assignFavoriteCategoryItems([entry], entry.category, anchorEl);
+        item.category = entry.category;
+        return { ok: true, category: entry.category, favorited: true };
+    }
+
+    function _renderFavoriteBulkToolbar() {
+        if (!_isSelectableGalleryCategory() || category === "favorites" || !_lastList.length) return;
+        const toolbar = document.createElement("div");
+        toolbar.className = `anima-favorite-bulk-toolbar${_multiSelectMode ? "" : " compact"}`;
+        toolbar.innerHTML = `
+            <button type="button" class="hdr-btn-txt" data-selection-toggle>${_multiSelectMode ? "Done" : "Select"}</button>
+            ${_multiSelectMode ? `
+                <span data-selection-count>${_selectedFavoriteItems.size} selected</span>
+                <button type="button" class="hdr-btn-txt" data-selection-all>Select Page</button>
+                <button type="button" class="hdr-btn-txt" data-selection-clear>Clear</button>
+                <select data-selection-category>${_categorySelectOptions({ selected: "" })}</select>
+                <button type="button" class="hdr-btn-txt" data-selection-new>New Category</button>
+                <button type="button" class="hdr-btn-txt" data-selection-assign data-selection-requires-items disabled>Set Favorite Category</button>
+            ` : ""}
+        `;
+        grid.prepend(toolbar);
+        const select = toolbar.querySelector("[data-selection-category]");
+        toolbar.querySelector("[data-selection-toggle]")?.addEventListener("click", async () => {
+            _multiSelectMode = !_multiSelectMode;
+            if (!_multiSelectMode) _clearFavoriteSelection();
+            await _render({ preservePage: true });
+        });
+        toolbar.querySelector("[data-selection-all]")?.addEventListener("click", () => {
+            for (const item of _lastList) {
+                const key = _selectionKeyForFavoriteItem(item);
+                if (!key) continue;
+                _selectedFavoriteItems.set(key, item);
+            }
+            grid.querySelectorAll(".anima-card,.anima-fullet-card").forEach((card) => {
+                card.classList.add("multi-selected");
+                const btn = card.querySelector(".anima-card-select-toggle");
+                if (btn) {
+                    btn.textContent = "Selected";
+                    btn.setAttribute("aria-pressed", "true");
+                }
+            });
+            _syncSelectionToolbar();
+        });
+        toolbar.querySelector("[data-selection-clear]")?.addEventListener("click", () => {
+            _clearFavoriteSelection();
+            grid.querySelectorAll(".anima-card.multi-selected,.anima-fullet-card.multi-selected").forEach((card) => card.classList.remove("multi-selected"));
+            grid.querySelectorAll(".anima-card-select-toggle").forEach((btn) => {
+                btn.textContent = "Select";
+                btn.setAttribute("aria-pressed", "false");
+            });
+            _syncSelectionToolbar();
+        });
+        toolbar.querySelector("[data-selection-new]")?.addEventListener("click", async () => {
+            const name = await _createFavoriteCategory("");
+            if (!name) return;
+            select.innerHTML = _categorySelectOptions({ selected: name });
+        });
+        toolbar.querySelector("[data-selection-assign]")?.addEventListener("click", async (event) => {
+            await _batchAssignSelectedFavorites(select?.value || "", event.currentTarget);
+        });
+        _syncSelectionToolbar();
+    }
+
+    function _renderFavoritesToolbar(totalCount = 0) {
+        const toolbar = document.createElement("div");
+        toolbar.className = "anima-favorites-toolbar";
+        toolbar.innerHTML = `
+            <span>Category</span>
+            <select data-favorite-category-filter>${_categorySelectOptions({ includeAll: true, selected: _favoriteCategoryFilter })}</select>
+            <button type="button" class="hdr-btn-txt" data-favorite-category-new>New</button>
+            <button type="button" class="hdr-btn-txt" data-favorite-category-rename>Rename</button>
+            <button type="button" class="hdr-btn-txt" data-favorite-category-delete>Delete</button>
+            <i>${totalCount} shown</i>
+            <span class="anima-toolbar-divider"></span>
+            <button type="button" class="hdr-btn-txt" data-selection-toggle>${_multiSelectMode ? "Done" : "Select"}</button>
+            ${_multiSelectMode ? `
+                <span data-selection-count>${_selectedFavoriteItems.size} selected</span>
+                <button type="button" class="hdr-btn-txt" data-selection-all>Select Page</button>
+                <button type="button" class="hdr-btn-txt" data-selection-clear>Clear</button>
+                <select data-selection-category>${_categorySelectOptions({ selected: "" })}</select>
+                <button type="button" class="hdr-btn-txt" data-selection-new>New Category</button>
+                <button type="button" class="hdr-btn-txt" data-selection-assign data-selection-requires-items disabled>Set Favorite Category</button>
+            ` : ""}
+        `;
+        grid.prepend(toolbar);
+        const select = toolbar.querySelector("[data-favorite-category-filter]");
+        const assignSelect = toolbar.querySelector("[data-selection-category]");
+        select?.addEventListener("change", async (event) => {
+            _favoriteCategoryFilter = event.currentTarget.value;
+            await _renderFavorites({ preservePage: true });
+        });
+        toolbar.querySelector("[data-favorite-category-new]")?.addEventListener("click", async () => {
+            const name = await _createFavoriteCategory("");
+            if (!name) return;
+            _favoriteCategoryFilter = name;
+            await _renderFavorites({ preservePage: true });
+        });
+        toolbar.querySelector("[data-favorite-category-rename]")?.addEventListener("click", async (event) => {
+            const oldName = _favoriteCategoryName(select?.value);
+            if (!oldName) {
+                showToast("Uncategorized cannot be renamed", "error", 1800, { anchor: event.currentTarget });
+                return;
+            }
+            const newName = _favoriteCategoryName(window.prompt("Rename category", oldName));
+            if (!newName || newName === oldName) return;
+            const result = await _mutateLocalFavorites({ action: "category_rename", oldName, newName });
+            if (!result.ok) {
+                showToast(result.error || "Could not rename category", "error", 2400, { anchor: event.currentTarget });
+                return;
+            }
+            _favoriteCategoryFilter = newName;
+            await _renderFavorites({ preservePage: true });
+        });
+        toolbar.querySelector("[data-favorite-category-delete]")?.addEventListener("click", async (event) => {
+            const name = _favoriteCategoryName(select?.value);
+            if (!name) {
+                showToast("Uncategorized cannot be deleted", "error", 1800, { anchor: event.currentTarget });
+                return;
+            }
+            if (!window.confirm(`Delete category "${name}"? Favorites in it will move to Uncategorized.`)) return;
+            const result = await _mutateLocalFavorites({ action: "category_delete", name });
+            if (!result.ok) {
+                showToast(result.error || "Could not delete category", "error", 2400, { anchor: event.currentTarget });
+                return;
+            }
+            _favoriteCategoryFilter = "__all__";
+            await _renderFavorites({ preservePage: true });
+        });
+        toolbar.querySelector("[data-selection-toggle]")?.addEventListener("click", async () => {
+            _multiSelectMode = !_multiSelectMode;
+            if (!_multiSelectMode) _clearFavoriteSelection();
+            await _renderFavorites({ preservePage: true });
+        });
+        toolbar.querySelector("[data-selection-all]")?.addEventListener("click", () => {
+            for (const item of _lastList) {
+                const key = _selectionKeyForFavoriteItem(item);
+                if (!key) continue;
+                _selectedFavoriteItems.set(key, item);
+            }
+            grid.querySelectorAll(".anima-card,.anima-fullet-card").forEach((card) => {
+                card.classList.add("multi-selected");
+                const btn = card.querySelector(".anima-card-select-toggle");
+                if (btn) {
+                    btn.textContent = "Selected";
+                    btn.setAttribute("aria-pressed", "true");
+                }
+            });
+            _syncSelectionToolbar();
+        });
+        toolbar.querySelector("[data-selection-clear]")?.addEventListener("click", () => {
+            _clearFavoriteSelection();
+            grid.querySelectorAll(".anima-card.multi-selected,.anima-fullet-card.multi-selected").forEach((card) => card.classList.remove("multi-selected"));
+            grid.querySelectorAll(".anima-card-select-toggle").forEach((btn) => {
+                btn.textContent = "Select";
+                btn.setAttribute("aria-pressed", "false");
+            });
+            _syncSelectionToolbar();
+        });
+        toolbar.querySelector("[data-selection-new]")?.addEventListener("click", async () => {
+            const name = await _createFavoriteCategory("");
+            if (!name || !assignSelect) return;
+            assignSelect.innerHTML = _categorySelectOptions({ selected: name });
+        });
+        toolbar.querySelector("[data-selection-assign]")?.addEventListener("click", async (event) => {
+            await _batchAssignSelectedFavorites(assignSelect?.value || "", event.currentTarget);
+        });
+        _syncSelectionToolbar();
+    }
+
     function _refreshPromptPreview(message = "") {
         if (!promptEditor) return;
         const widget = activeNode ? getPromptWidget(activeNode) : null;
@@ -359,6 +652,66 @@ export const Browser = (() => {
 
     function _setRemoteFavoriteSyncPending(value) {
         _safeLocalSet("anima_remote_favorites_pending", value ? "true" : "false");
+    }
+
+    function _setPromptCollapsed(collapsed) {
+        const panel = el?.querySelector(".anima-prompt-panel");
+        const toggle = el?.querySelector("#anima-prompt-toggle");
+        panel?.classList.toggle("collapsed", !!collapsed);
+        if (toggle) {
+            toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+            toggle.title = collapsed ? "Expand Prompt Preview" : "Collapse Prompt Preview";
+            toggle.setAttribute("aria-label", collapsed ? "Expand Prompt Preview" : "Collapse Prompt Preview");
+        }
+        _safeLocalSet(PROMPT_COLLAPSED_KEY, collapsed ? "true" : "false");
+    }
+
+    function _initPromptCollapse() {
+        const collapsed = _safeLocalGet(PROMPT_COLLAPSED_KEY, "false") === "true";
+        _setPromptCollapsed(collapsed);
+        const toggle = el?.querySelector("#anima-prompt-toggle");
+        if (!toggle || toggle._animaPromptToggleBound) return;
+        toggle._animaPromptToggleBound = true;
+        toggle.addEventListener("click", () => {
+            const next = !el?.querySelector(".anima-prompt-panel")?.classList.contains("collapsed");
+            _setPromptCollapsed(next);
+        });
+    }
+
+    function _setSearchOpen(open, { focus = false } = {}) {
+        const tools = el?.querySelector(".top-search-tools");
+        const toggle = el?.querySelector("#anima-search-toggle");
+        const input = el?.querySelector(".cycle-search input");
+        tools?.classList.toggle("search-open", !!open);
+        if (toggle) {
+            toggle.setAttribute("aria-expanded", open ? "true" : "false");
+            toggle.title = open ? "Hide Search" : "Search";
+        }
+        _safeLocalSet(SEARCH_OPEN_KEY, open ? "true" : "false");
+        if (open && focus) {
+            setTimeout(() => input?.focus(), 20);
+        }
+    }
+
+    function _initSearchToggle() {
+        const input = el?.querySelector(".cycle-search input");
+        const hasSearch = !!String(input?.value || "").trim();
+        const savedOpen = _safeLocalGet(SEARCH_OPEN_KEY, "false") === "true";
+        _setSearchOpen(hasSearch || savedOpen);
+        const toggle = el?.querySelector("#anima-search-toggle");
+        if (toggle && !toggle._animaSearchToggleBound) {
+            toggle._animaSearchToggleBound = true;
+            toggle.addEventListener("click", () => {
+                const isOpen = el?.querySelector(".top-search-tools")?.classList.contains("search-open");
+                _setSearchOpen(!isOpen, { focus: !isOpen });
+            });
+        }
+        if (input && !input._animaSearchOpenBound) {
+            input._animaSearchOpenBound = true;
+            input.addEventListener("input", () => {
+                if (String(input.value || "").trim()) _setSearchOpen(true);
+            });
+        }
     }
 
     function _localHeaders() {
@@ -455,7 +808,7 @@ export const Browser = (() => {
     }
 
     function _isSortableCategory(value = category) {
-        return value === "all" || value === "generated" || _isAnimadexCategory(value);
+        return value === "all" || value === "generated" || value === "favorites" || _isAnimadexCategory(value);
     }
 
     function _remoteImagesRelevant(value = category) {
@@ -493,7 +846,8 @@ export const Browser = (() => {
             btn.style.opacity = active ? "1" : "0.72";
         }
         const sortSelect = el.querySelector(".hdr-select");
-        if (sortSelect) sortSelect.disabled = !_isSortableCategory();
+        const sortable = _isSortableCategory();
+        if (sortSelect) sortSelect.disabled = !sortable;
         const refreshBtn = el.querySelector("#anima-refresh");
         if (refreshBtn) {
             refreshBtn.title = category === "generated" ? "Refresh Gallery" : "Refresh Styles";
@@ -751,7 +1105,9 @@ export const Browser = (() => {
 
     async function _loadLocalFavorites(force = false) {
         if (_localFavoritesLoaded && !force) return _localFavorites;
-        _localFavorites = await fetchLocalFavorites(api);
+        const payload = await loadLocalFavoritesPayload(api);
+        _localFavorites = payload.items;
+        _favoriteCategories = payload.categories;
         _localFavoritesLoaded = true;
         _rebuildFavoriteMap();
 
@@ -777,9 +1133,10 @@ export const Browser = (() => {
         }
 
         _localFavorites = Array.isArray(result.items) ? result.items : _localFavorites;
+        _favoriteCategories = Array.isArray(result.categories) ? result.categories : _favoriteCategories;
         _localFavoritesLoaded = true;
         _rebuildFavoriteMap();
-        return { ok: true, data: result.data };
+        return { ok: true, data: result.data, items: _localFavorites, categories: _favoriteCategories };
     }
 
     async function _exportFavorites(anchorEl = null) {
@@ -795,6 +1152,7 @@ export const Browser = (() => {
         if (!file) return;
         try {
             _localFavorites = await importLocalFavorites(api, _localHeaders(), file);
+            await _loadLocalFavorites(true);
             _localFavoritesLoaded = true;
             _rebuildFavoriteMap();
             showToast("Imported favorites", "success", 1600, { anchor: anchorEl });
@@ -1108,6 +1466,7 @@ export const Browser = (() => {
     function _renderFulletCard(post) {
         const favKey = favoriteKeyFromItem({ kind: "fullet", id: post?.id || post?.postId });
         const isFav = favKey ? _favoriteMap.has(favKey) : false;
+        const selectionKey = _selectionKeyForFavoriteItem(post);
 
         return createFulletCard({
             post,
@@ -1122,6 +1481,9 @@ export const Browser = (() => {
                 const idx = _lastList.findIndex((x) => String(x?.id || "") === String(item?.id || ""));
                 _openSwipe(idx >= 0 ? idx : 0);
             },
+            selectionMode: _multiSelectMode && category === "favorites",
+            selected: selectionKey ? _selectedFavoriteItems.has(selectionKey) : false,
+            onSelectToggle: (item) => _toggleSelectedFavoriteItem(item),
         });
     }
 
@@ -1132,6 +1494,8 @@ export const Browser = (() => {
             countEl = el?.querySelector("#anima-count") || null;
             promptEditor = el?.querySelector("#anima-prompt-editor") || null;
             promptStatus = el?.querySelector("#anima-prompt-status") || null;
+            _initPromptCollapse();
+            _initSearchToggle();
             return;
         }
 
@@ -1146,6 +1510,8 @@ export const Browser = (() => {
         promptEditor = el.querySelector("#anima-prompt-editor");
         promptStatus = el.querySelector("#anima-prompt-status");
         promptEditor?.addEventListener("input", _writePromptPreview);
+        _initPromptCollapse();
+        _initSearchToggle();
         el.querySelector("#anima-page-go")?.addEventListener("click", () => {
             _jumpToPage(el.querySelector("#anima-page-input")?.value);
         });
@@ -1274,12 +1640,17 @@ export const Browser = (() => {
                 }
                 return await _toggleStyleFavorite(item, anchorEl);
             },
+            onSetFavoriteCategory: async (item, categoryName = "", anchorEl = null) => {
+                return await _setFavoriteCategoryForItem(item, categoryName, anchorEl);
+            },
             isFavorited: (item) => {
                 if (isFulletLike(item)) {
                     return _isFavorited({ kind: "fullet", id: item?.id || item?.postId });
                 }
                 return _isFavorited({ kind: "style", tag: item?.tag });
             },
+            getFavoriteCategory: (item) => _favoriteCategoryForItem(item),
+            getFavoriteCategoryOptions: () => _favoriteCategoryOptionsForSwipe(),
             getImageUrl: (item) => {
                 if (isFulletLike(item)) {
                     return String(item?.fullImageUrl || _getFulletFullImageUrl(item) || "");
@@ -1378,6 +1749,8 @@ export const Browser = (() => {
             localFavorites: _localFavorites,
             remoteFavorites: _remoteFavorites,
             filter,
+            categoryFilter: _favoriteCategoryFilter,
+            sort,
         });
         await _loadGeneratedPreviews();
         if (id !== _renderId) return;
@@ -1387,7 +1760,10 @@ export const Browser = (() => {
         );
         const generatedByTag = new Map(generatedFavorites.map((item) => [String(item?.tag || ""), item]));
 
-        countEl.textContent = `${list.length} favorites`;
+        const categoryLabel = _favoriteCategoryFilter === "__all__"
+            ? "favorites"
+            : `${_favoriteCategoryFilter || "Uncategorized"} favorites`;
+        countEl.textContent = `${list.length} ${categoryLabel}`;
         _lastList = list.map((item) => (isFulletLike(item)
             ? { ...item, displayImageUrl: _getFulletDisplayImageUrl(item), fullImageUrl: _getFulletFullImageUrl(item) }
             : (generatedByTag.get(String(item?.tag || "")) || item)));
@@ -1396,7 +1772,8 @@ export const Browser = (() => {
 
         if (!list.length) {
             if (_observer) _observer.disconnect();
-            grid.innerHTML = `<div class="anima-empty"><span>No favorites yet.</span></div>`;
+            grid.innerHTML = `<div class="anima-empty"><span>No favorites found.</span></div>`;
+            _renderFavoritesToolbar(list.length);
             _updatePageJump(0, 60);
             return;
         }
@@ -1412,6 +1789,8 @@ export const Browser = (() => {
                 return _card(item);
             },
         });
+        _renderFavoritesToolbar(list.length);
+        _renderFavoriteBulkToolbar();
         _updatePageJump(_lastList.length, 60);
         _restoreOrResetScroll({ ...options, pageSize: 60 });
     }
@@ -1465,6 +1844,7 @@ export const Browser = (() => {
             minHeight: "400px",
             renderItem: (item) => _card(item),
         });
+        _renderFavoriteBulkToolbar();
         _updatePageJump(list.length, 100);
         _restoreOrResetScroll({ ...options, pageSize: 100 });
 
@@ -1507,6 +1887,7 @@ export const Browser = (() => {
             minHeight: "400px",
             renderItem: (item) => _card(item),
         });
+        _renderFavoriteBulkToolbar();
         _updatePageJump(list.length, 100);
         _restoreOrResetScroll({ ...options, pageSize: 100 });
 
@@ -1515,7 +1896,7 @@ export const Browser = (() => {
             notice.className = "anima-remote-notice";
             notice.innerHTML = `
                 <strong>Remote Images are disabled.</strong>
-                <span>Turn on <b>Remote Images</b> in the top bar to see preview images. Triggers and tags still work offline.</span>
+                <span>Turn on <b>Remote Images</b> in settings to see preview images. Triggers and tags still work offline.</span>
             `;
             grid.prepend(notice);
         }
@@ -1527,6 +1908,7 @@ export const Browser = (() => {
             : (artist?.generatedImageUrl || thumbUrl(artist, false));
         const isUniq = sort === "uniqueness";
         const isFav = _isFavorited({ kind: "style", tag: artist.tag });
+        const selectionKey = _selectionKeyForFavoriteItem(artist);
 
         return createStyleCard({
             artist,
@@ -1567,6 +1949,9 @@ export const Browser = (() => {
             },
             getStyleSlots: () => getStylePromptSlots(activeNode),
             editMode: false,
+            selectionMode: _multiSelectMode && _isSelectableGalleryCategory(),
+            selected: selectionKey ? _selectedFavoriteItems.has(selectionKey) : false,
+            onSelectToggle: (selectedArtist) => _toggleSelectedFavoriteItem(selectedArtist),
         });
     }
 
@@ -1594,7 +1979,9 @@ export const Browser = (() => {
         _refreshPromptPreview();
         clearInterval(_promptPollTimer);
         _promptPollTimer = setInterval(() => _refreshPromptPreview(), 350);
-        el.querySelector(".cycle-search input").focus();
+        if (el.querySelector(".top-search-tools")?.classList.contains("search-open")) {
+            el.querySelector(".cycle-search input")?.focus();
+        }
         await _ensureLocalToken();
         await _refreshAuthStatus();
         await _loadLocalFavorites();

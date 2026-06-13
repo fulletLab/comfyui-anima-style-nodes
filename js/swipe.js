@@ -10,14 +10,18 @@ export const Swipe = (() => {
     let titleEl = null;
     let counterEl = null;
     let favoriteBtn = null;
+    let categorySelect = null;
 
     let _list = [];
     let _index = 0;
     let _onApply = null;
     let _onToggleFavorite = null;
+    let _onSetFavoriteCategory = null;
     let _getImageUrl = null;
     let _getTitle = null;
     let _isFavorited = null;
+    let _getFavoriteCategory = null;
+    let _getFavoriteCategoryOptions = null;
 
     let _keyHandler = null;
     const _preloaded = new Set();
@@ -38,6 +42,7 @@ export const Swipe = (() => {
                 <span class="swipe-title" id="anima-swipe-title"></span>
                 <div class="swipe-actions">
                     <button class="swipe-favorite" id="anima-swipe-favorite" title="Toggle favorite">Favorite</button>
+                    <select class="swipe-category" id="anima-swipe-category" title="Save to favorite category"></select>
                     <button class="swipe-close" id="anima-swipe-close" title="Close">&#10005;</button>
                 </div>
             </div>
@@ -57,6 +62,7 @@ export const Swipe = (() => {
         titleEl = el.querySelector("#anima-swipe-title");
         counterEl = el.querySelector("#anima-swipe-counter");
         favoriteBtn = el.querySelector("#anima-swipe-favorite");
+        categorySelect = el.querySelector("#anima-swipe-category");
 
         el.querySelector(".backdrop").addEventListener("click", close);
         el.querySelector("#anima-swipe-close").addEventListener("click", close);
@@ -64,6 +70,11 @@ export const Swipe = (() => {
             e.preventDefault();
             e.stopPropagation();
             _toggleFavorite();
+        });
+        categorySelect?.addEventListener("change", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            _setFavoriteCategory(e.currentTarget.value);
         });
 
         prevImg.addEventListener("click", (e) => { e.stopPropagation(); _navigate(-1); });
@@ -115,6 +126,24 @@ export const Swipe = (() => {
         }
     }
 
+    async function _setFavoriteCategory(category) {
+        const item = _getItem(_index);
+        if (!item || typeof _onSetFavoriteCategory !== "function") return;
+        if (categorySelect) categorySelect.disabled = true;
+        try {
+            const res = await _onSetFavoriteCategory(item, category, categorySelect);
+            if (res?.ok) {
+                item.category = String(category || "").trim();
+                item._swipeFavorited = true;
+            }
+        } catch (_) {
+        } finally {
+            if (categorySelect) categorySelect.disabled = false;
+            _syncFavoriteButton();
+            _syncCategorySelect();
+        }
+    }
+
     function _favoriteState(item) {
         if (!item) return false;
         if (typeof item._swipeFavorited === "boolean") return item._swipeFavorited;
@@ -131,6 +160,32 @@ export const Swipe = (() => {
         favoriteBtn.style.display = enabled ? "inline-flex" : "none";
         favoriteBtn.classList.toggle("active", favorited);
         favoriteBtn.textContent = favorited ? "Unfavorite" : "Favorite";
+    }
+
+    function _syncCategorySelect() {
+        if (!categorySelect) return;
+        const item = _getItem(_index);
+        const enabled = !!item && typeof _onSetFavoriteCategory === "function";
+        categorySelect.style.display = enabled ? "inline-flex" : "none";
+        if (!enabled) return;
+
+        const options = typeof _getFavoriteCategoryOptions === "function"
+            ? _getFavoriteCategoryOptions(item)
+            : [{ value: "", label: "Uncategorized" }];
+        const current = typeof _getFavoriteCategory === "function"
+            ? String(_getFavoriteCategory(item) || "")
+            : String(item?.category || "");
+        const escapeOption = (value) => String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+        categorySelect.innerHTML = options.map((option) => {
+            const value = String(option?.value || "");
+            const label = String(option?.label || value || "Uncategorized");
+            return `<option value="${escapeOption(value)}" ${value === current ? "selected" : ""}>${escapeOption(label)}</option>`;
+        }).join("");
+        categorySelect.value = current;
     }
 
     function _navigate(delta) {
@@ -192,6 +247,7 @@ export const Swipe = (() => {
         titleEl.textContent = title ? `@${title}` : "";
         counterEl.textContent = `${_index + 1} / ${len}`;
         _syncFavoriteButton();
+        _syncCategorySelect();
 
         // Re-trigger animation
         container?.classList.remove("swipe-transition");
@@ -234,7 +290,7 @@ export const Swipe = (() => {
         }
     }
 
-    function open({ list, startIndex = 0, onApply, onToggleFavorite, isFavorited, getImageUrl, getTitle } = {}) {
+    function open({ list, startIndex = 0, onApply, onToggleFavorite, onSetFavoriteCategory, isFavorited, getFavoriteCategory, getFavoriteCategoryOptions, getImageUrl, getTitle } = {}) {
         _build();
         if (!Array.isArray(list) || list.length === 0) return;
 
@@ -242,7 +298,10 @@ export const Swipe = (() => {
         _index = _normalizeIndex(startIndex, _list.length);
         _onApply = onApply ?? null;
         _onToggleFavorite = onToggleFavorite ?? null;
+        _onSetFavoriteCategory = onSetFavoriteCategory ?? null;
         _isFavorited = isFavorited ?? null;
+        _getFavoriteCategory = getFavoriteCategory ?? null;
+        _getFavoriteCategoryOptions = getFavoriteCategoryOptions ?? null;
         _getImageUrl = getImageUrl ?? null;
         _getTitle = getTitle ?? null;
         _preloaded.clear();
@@ -267,7 +326,10 @@ export const Swipe = (() => {
         _list = [];
         _onApply = null;
         _onToggleFavorite = null;
+        _onSetFavoriteCategory = null;
         _isFavorited = null;
+        _getFavoriteCategory = null;
+        _getFavoriteCategoryOptions = null;
         _getImageUrl = null;
         _getTitle = null;
         _preloaded.clear();

@@ -5,12 +5,126 @@
                 <div class="hdr">
                     <span class="hdr-title" style="margin-right:4px">Anima Style Explorer</span>
                     <div class="hdr-tabs">
-                        <button class="hdr-btn-txt active" id="anima-cat-all" style="opacity:1;">All Styles</button>
-                        <button class="hdr-btn-txt" id="anima-cat-animadex-styles" style="opacity:0.5;">Animadex Styles</button>
+                        <button class="hdr-btn-txt active" id="anima-cat-all" style="opacity:1;">All</button>
+                        <button class="hdr-btn-txt" id="anima-cat-animadex-styles" style="opacity:0.5;">Animadex</button>
                         <button class="hdr-btn-txt" id="anima-cat-animadex-characters" style="opacity:0.5;">Characters</button>
                         <button class="hdr-btn-txt" id="anima-cat-generated" style="opacity:0.5;">Generated</button>
-                        <button class="hdr-btn-txt" id="anima-cat-fullet" style="opacity:0.5;">Fullet Prompts</button>
+                        <button class="hdr-btn-txt" id="anima-cat-fullet" style="opacity:0.5;">Fullet</button>
                         <button class="hdr-btn-txt" id="anima-cat-favorites" style="opacity:0.5;">Favorites</button>
+                    </div>
+                    <div class="top-cycle-bar">
+                        <span class="cycle-label">Cycle</span>
+                        <button class="anima-play-btn" id="anima-cycle-btn">
+                            <span class="btn-icon">&#9654;</span>
+                            <span class="btn-lbl">Play</span>
+                        </button>
+                        <div class="cycle-settings-wrap">
+                            <button class="cycle-settings-btn" id="anima-cycle-settings" title="Auto Cycle settings" aria-label="Auto Cycle settings">&#9881;</button>
+                            <div class="cycle-settings-panel hidden" id="anima-cycle-settings-panel">
+                                <div class="cycle-settings-head">
+                                    <div>
+                                        <strong>Auto Cycle Settings</strong>
+                                        <span>Choose what rotates when Play queues the next prompt.</span>
+                                    </div>
+                                    <button type="button" id="anima-cycle-settings-close" title="Close">&#10005;</button>
+                                </div>
+                                <div class="cycle-settings-grid">
+                                    <label class="cycle-control cycle-control-small">
+                                        <span class="cycle-count-toggle">
+                                            <input id="anima-cycle-enable-styles" type="checkbox" checked/>
+                                            <span>Styles</span>
+                                        </span>
+                                        <div class="cycle-stepper">
+                                            <button type="button" data-step-target="anima-cycle-artists" data-step-delta="-1" aria-label="Decrease artists">-</button>
+                                            <input id="anima-cycle-artists" type="number" min="1" max="6" step="1" value="1"/>
+                                            <button type="button" data-step-target="anima-cycle-artists" data-step-delta="1" aria-label="Increase artists">+</button>
+                                        </div>
+                                        <small>@style tags per cycle.</small>
+                                    </label>
+                                    <label class="cycle-control cycle-control-small cycle-control-character">
+                                        <span class="cycle-count-toggle">
+                                            <input id="anima-cycle-enable-characters" type="checkbox"/>
+                                            <span>Characters</span>
+                                        </span>
+                                        <div class="cycle-character-controls">
+                                            <div class="cycle-stepper">
+                                                <button type="button" data-step-target="anima-cycle-characters" data-step-delta="-1" aria-label="Decrease characters">-</button>
+                                                <input id="anima-cycle-characters" type="number" min="1" max="6" step="1" value="1"/>
+                                                <button type="button" data-step-target="anima-cycle-characters" data-step-delta="1" aria-label="Increase characters">+</button>
+                                            </div>
+                                            <div class="cycle-character-mode-row">
+                                                <select id="anima-cycle-character-mode">
+                                                    <option value="trigger">Trigger</option>
+                                                    <option value="trigger-tags">Trigger + tags</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <small>Character groups per cycle.</small>
+                                    </label>
+                                    <label class="cycle-control cycle-control-small">
+                                        <span>Images</span>
+                                        <div class="cycle-stepper">
+                                            <button type="button" data-step-target="anima-cycle-repeats" data-step-delta="-1" aria-label="Decrease images">-</button>
+                                            <input id="anima-cycle-repeats" type="number" min="1" max="24" step="1" value="1"/>
+                                            <button type="button" data-step-target="anima-cycle-repeats" data-step-delta="1" aria-label="Increase images">+</button>
+                                        </div>
+                                        <small>Images before new tags.</small>
+                                    </label>
+                                    <label class="cycle-control">
+                                        <span>Pick Mode</span>
+                                        <select id="anima-cycle-pick-mode">
+                                            <option value="random-uniform">Random - uniform</option>
+                                            <option value="random-weighted">Random - by image count</option>
+                                            <option value="order">Card Order</option>
+                                        </select>
+                                    </label>
+                                    <label class="cycle-control">
+                                        <span>Record Basis</span>
+                                        <select id="anima-cycle-record-basis">
+                                            <option value="cycle">Cycle records</option>
+                                            <option value="generated">Generated gallery</option>
+                                        </select>
+                                        <small>Skip artists that already have previews.</small>
+                                    </label>
+                                    <label class="cycle-control cycle-control-small">
+                                        <span>Batch Count</span>
+                                        <div class="cycle-stepper">
+                                            <button type="button" data-step-target="anima-cycle-batch-count" data-step-delta="-1" aria-label="Decrease batch count">-</button>
+                                            <input id="anima-cycle-batch-count" type="number" min="-1" step="1" value="20"/>
+                                            <button type="button" data-step-target="anima-cycle-batch-count" data-step-delta="1" aria-label="Increase batch count">+</button>
+                                        </div>
+                                        <small>New picks before stop. Use -1 for unlimited.</small>
+                                    </label>
+                                    <label class="cycle-control cycle-control-range">
+                                        <span>Works Range</span>
+                                        <div class="cycle-range-inputs">
+                                            <input id="anima-cycle-works-min" type="number" min="0" step="1" placeholder="Min"/>
+                                            <span>to</span>
+                                            <input id="anima-cycle-works-max" type="number" min="0" step="1" placeholder="Max"/>
+                                        </div>
+                                        <small>Leave blank for no limit.</small>
+                                    </label>
+                                    <div class="cycle-record-actions">
+                                        <button type="button" id="anima-cycle-clear-records">Clear Records</button>
+                                        <small>Reset count and used artist history.</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="anima-cycle-status" id="anima-cycle-status">stopped</span>
+                    </div>
+                    <div class="top-search-tools">
+                        <button type="button" class="hdr-btn top-search-toggle" id="anima-search-toggle" title="Search" aria-expanded="false">&#128269;</button>
+                        <div class="cycle-search">
+                            <i>@</i>
+                            <input type="text" placeholder="Search..." autocomplete="off" spellcheck="false"/>
+                        </div>
+                        <select class="hdr-select anima-sort-select" title="Sort current tab">
+                            <option value="works">Popular</option>
+                            <option value="uniqueness">Unique</option>
+                            <option value="name">A - Z</option>
+                            <option value="latest">Latest</option>
+                        </select>
                     </div>
                     <div class="hdr-gap"></div>
                     <span class="anima-fullet-auth" id="anima-fullet-auth">API key not set</span>
@@ -18,180 +132,77 @@
                     <button class="hdr-btn-txt" id="anima-fullet-disconnect" style="display:none;">Remove Key</button>
                     <button class="hdr-btn-txt" id="anima-fullet-upload">Publish Collage</button>
                     <div class="hdr-data-btns">
-                        <div class="hdr-toggle-wrap" title="Enable internet access for remote preview images, including Animadex Styles and Characters">
-                            <span class="hdr-toggle-label">Remote Images</span>
-                            <label class="hdr-switch">
-                                <input type="checkbox" id="anima-online-toggle"/>
-                                <span class="hdr-slider"></span>
-                            </label>
-                        </div>
                         <div class="hdr-settings-wrap" title="Tools">
                             <button class="hdr-btn" id="anima-settings-gear" aria-label="Tools">&#9881;</button>
                             <div class="hdr-settings-menu">
-                                <label class="hdr-settings-option" for="anima-animadex-source" title="Also mix Animadex entries into All Styles. The Animadex tabs are always available when the index exists.">
-                                    <input type="checkbox" id="anima-animadex-source" />
-                                    <span>Show Animadex in All Styles</span>
+                                <label class="hdr-settings-row hdr-settings-switch-row" for="anima-online-toggle" title="Enable internet access for remote preview images, including Animadex and Characters">
+                                    <span>Remote Images</span>
+                                    <span class="hdr-switch">
+                                        <input type="checkbox" id="anima-online-toggle"/>
+                                        <span class="hdr-slider"></span>
+                                    </span>
                                 </label>
-                                <button class="hdr-btn-txt hdr-settings-item" id="anima-generated-import-menu">Import Gallery</button>
-                                <button class="hdr-btn-txt hdr-settings-item" id="anima-generated-export-menu">Export Gallery</button>
+                                <label class="hdr-settings-row hdr-settings-switch-row hdr-settings-option" for="anima-animadex-source" title="Also mix Animadex entries into All Styles. The Animadex tabs are always available when the index exists.">
+                                    <span>Animadex in All</span>
+                                    <span class="hdr-switch">
+                                        <input type="checkbox" id="anima-animadex-source" />
+                                        <span class="hdr-slider"></span>
+                                    </span>
+                                </label>
+                                <div class="hdr-settings-tabs hdr-settings-tabs-single">
+                                    <span>Visible Tabs</span>
+                                    <label class="hdr-tab-chip" for="anima-tab-visible-all">
+                                        <span>All</span>
+                                        <input type="checkbox" id="anima-tab-visible-all" data-tab-toggle="all" />
+                                    </label>
+                                    <label class="hdr-tab-chip" for="anima-tab-visible-animadex-styles">
+                                        <span>Animadex</span>
+                                        <input type="checkbox" id="anima-tab-visible-animadex-styles" data-tab-toggle="animadex-styles" />
+                                    </label>
+                                    <label class="hdr-tab-chip" for="anima-tab-visible-animadex-characters">
+                                        <span>Characters</span>
+                                        <input type="checkbox" id="anima-tab-visible-animadex-characters" data-tab-toggle="animadex-characters" />
+                                    </label>
+                                    <label class="hdr-tab-chip" for="anima-tab-visible-generated">
+                                        <span>Generated</span>
+                                        <input type="checkbox" id="anima-tab-visible-generated" data-tab-toggle="generated" />
+                                    </label>
+                                    <label class="hdr-tab-chip" for="anima-tab-visible-fullet">
+                                        <span>Fullet</span>
+                                        <input type="checkbox" id="anima-tab-visible-fullet" data-tab-toggle="fullet" />
+                                    </label>
+                                    <label class="hdr-tab-chip" for="anima-tab-visible-favorites">
+                                        <span>Favorites</span>
+                                        <input type="checkbox" id="anima-tab-visible-favorites" data-tab-toggle="favorites" />
+                                    </label>
+                                </div>
+                                <div class="hdr-settings-actions">
+                                    <button class="hdr-btn-txt hdr-settings-item" id="anima-generated-import-menu">Import Gallery</button>
+                                    <button class="hdr-btn-txt hdr-settings-item" id="anima-generated-export-menu">Export Gallery</button>
+                                </div>
+                                <div class="hdr-settings-actions">
+                                    <button class="hdr-btn-txt hdr-settings-item" id="anima-favorites-import-menu">Import Favorites</button>
+                                    <button class="hdr-btn-txt hdr-settings-item" id="anima-favorites-export-menu">Export Favorites</button>
+                                </div>
                                 <div class="hdr-export-progress hidden" id="anima-generated-export-progress">
                                     <span id="anima-generated-export-label">Exporting...</span>
                                     <div><i id="anima-generated-export-bar"></i></div>
                                 </div>
                                 <input type="file" id="anima-generated-import-menu-file" accept=".json,.zip,application/json,application/zip" hidden/>
-                                <button class="hdr-btn-txt hdr-settings-item" id="anima-favorites-import-menu">Import Favorites</button>
-                                <button class="hdr-btn-txt hdr-settings-item" id="anima-favorites-export-menu">Export Favorites</button>
                                 <input type="file" id="anima-favorites-import-menu-file" accept=".json,application/json" hidden/>
-                                <div class="hdr-settings-group">
-                                    <span class="hdr-settings-group-title">Visible Tabs</span>
-                                    <label class="hdr-settings-option" for="anima-tab-visible-all">
-                                        <input type="checkbox" id="anima-tab-visible-all" data-tab-toggle="all" />
-                                        <span>All Styles</span>
-                                    </label>
-                                    <label class="hdr-settings-option" for="anima-tab-visible-animadex-styles">
-                                        <input type="checkbox" id="anima-tab-visible-animadex-styles" data-tab-toggle="animadex-styles" />
-                                        <span>Animadex Styles</span>
-                                    </label>
-                                    <label class="hdr-settings-option" for="anima-tab-visible-animadex-characters">
-                                        <input type="checkbox" id="anima-tab-visible-animadex-characters" data-tab-toggle="animadex-characters" />
-                                        <span>Characters</span>
-                                    </label>
-                                    <label class="hdr-settings-option" for="anima-tab-visible-generated">
-                                        <input type="checkbox" id="anima-tab-visible-generated" data-tab-toggle="generated" />
-                                        <span>Generated</span>
-                                    </label>
-                                    <label class="hdr-settings-option" for="anima-tab-visible-fullet">
-                                        <input type="checkbox" id="anima-tab-visible-fullet" data-tab-toggle="fullet" />
-                                        <span>Fullet Prompts</span>
-                                    </label>
-                                    <label class="hdr-settings-option" for="anima-tab-visible-favorites">
-                                        <input type="checkbox" id="anima-tab-visible-favorites" data-tab-toggle="favorites" />
-                                        <span>Favorites</span>
-                                    </label>
+                                <div class="hdr-settings-actions">
+                                    <button class="hdr-btn-txt hdr-settings-item" id="anima-update-styles">Update Styles</button>
+                                    <button class="hdr-btn-txt hdr-settings-item" id="anima-dl-images">Download Previews</button>
                                 </div>
-                                <button class="hdr-btn-txt hdr-settings-item" id="anima-update-styles">Update Styles</button>
-                                <button class="hdr-btn-txt hdr-settings-item" id="anima-dl-images">Download Previews</button>
                             </div>
                         </div>
                         <button class="hdr-btn" id="anima-refresh" title="Refresh Styles">&#8635;</button>
                     </div>
                     <button class="hdr-close" title="Close" style="margin-left:8px">&#10005;</button>
                 </div>
-                <div class="cycle-bar">
-                    <span class="cycle-label">Auto Cycle</span>
-                    <button class="anima-play-btn" id="anima-cycle-btn">
-                        <span class="btn-icon">&#9654;</span>
-                        <span class="btn-lbl">Play</span>
-                    </button>
-                    <div class="cycle-settings-wrap">
-                        <button class="cycle-settings-btn" id="anima-cycle-settings" title="Auto Cycle settings" aria-label="Auto Cycle settings">&#9881;</button>
-                        <div class="cycle-settings-panel hidden" id="anima-cycle-settings-panel">
-                            <div class="cycle-settings-head">
-                                <div>
-                                    <strong>Auto Cycle Settings</strong>
-                                    <span>Choose what rotates when Play queues the next prompt.</span>
-                                </div>
-                                <button type="button" id="anima-cycle-settings-close" title="Close">&#10005;</button>
-                            </div>
-                            <div class="cycle-settings-grid">
-                                <label class="cycle-control cycle-control-small">
-                                    <span class="cycle-count-toggle">
-                                        <input id="anima-cycle-enable-styles" type="checkbox" checked/>
-                                        <span>Styles</span>
-                                    </span>
-                                    <div class="cycle-stepper">
-                                        <button type="button" data-step-target="anima-cycle-artists" data-step-delta="-1" aria-label="Decrease artists">-</button>
-                                        <input id="anima-cycle-artists" type="number" min="1" max="6" step="1" value="1"/>
-                                        <button type="button" data-step-target="anima-cycle-artists" data-step-delta="1" aria-label="Increase artists">+</button>
-                                    </div>
-                                    <small>How many @style tags per cycle.</small>
-                                </label>
-                                <label class="cycle-control cycle-control-small cycle-control-character">
-                                    <span class="cycle-count-toggle">
-                                        <input id="anima-cycle-enable-characters" type="checkbox"/>
-                                        <span>Characters</span>
-                                    </span>
-                                    <div class="cycle-character-controls">
-                                        <div class="cycle-stepper">
-                                            <button type="button" data-step-target="anima-cycle-characters" data-step-delta="-1" aria-label="Decrease characters">-</button>
-                                            <input id="anima-cycle-characters" type="number" min="1" max="6" step="1" value="1"/>
-                                            <button type="button" data-step-target="anima-cycle-characters" data-step-delta="1" aria-label="Increase characters">+</button>
-                                        </div>
-                                        <div class="cycle-character-mode-row">
-                                            <select id="anima-cycle-character-mode">
-                                                <option value="trigger">Trigger</option>
-                                                <option value="trigger-tags">Trigger + tags</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <small>How many character groups per cycle.</small>
-                                </label>
-                                <label class="cycle-control cycle-control-small">
-                                    <span>Images</span>
-                                    <div class="cycle-stepper">
-                                        <button type="button" data-step-target="anima-cycle-repeats" data-step-delta="-1" aria-label="Decrease images">-</button>
-                                        <input id="anima-cycle-repeats" type="number" min="1" max="24" step="1" value="1"/>
-                                        <button type="button" data-step-target="anima-cycle-repeats" data-step-delta="1" aria-label="Increase images">+</button>
-                                    </div>
-                                    <small>Images to queue before picking new tags.</small>
-                                </label>
-                                <label class="cycle-control">
-                                    <span>Pick Mode</span>
-                                    <select id="anima-cycle-pick-mode">
-                                        <option value="random-uniform">Random - uniform</option>
-                                        <option value="random-weighted">Random - by image count</option>
-                                        <option value="order">Card Order</option>
-                                    </select>
-                                </label>
-                                <label class="cycle-control">
-                                    <span>Record Basis</span>
-                                    <select id="anima-cycle-record-basis">
-                                        <option value="cycle">Cycle records</option>
-                                        <option value="generated">Generated gallery</option>
-                                    </select>
-                                    <small>Generated gallery skips artists that already have previews.</small>
-                                </label>
-                                <label class="cycle-control cycle-control-small">
-                                    <span>Batch Count</span>
-                                    <div class="cycle-stepper">
-                                        <button type="button" data-step-target="anima-cycle-batch-count" data-step-delta="-1" aria-label="Decrease batch count">-</button>
-                                        <input id="anima-cycle-batch-count" type="number" min="-1" step="1" value="20"/>
-                                        <button type="button" data-step-target="anima-cycle-batch-count" data-step-delta="1" aria-label="Increase batch count">+</button>
-                                    </div>
-                                    <small>How many new artist picks before Auto Cycle stops. Use -1 for unlimited.</small>
-                                </label>
-                                <label class="cycle-control cycle-control-range">
-                                    <span>Works Range</span>
-                                    <div class="cycle-range-inputs">
-                                        <input id="anima-cycle-works-min" type="number" min="0" step="1" placeholder="Min"/>
-                                        <span>to</span>
-                                        <input id="anima-cycle-works-max" type="number" min="0" step="1" placeholder="Max"/>
-                                    </div>
-                                    <small>Limit artists by work count. Leave either side blank for no bound.</small>
-                                </label>
-                                <div class="cycle-record-actions">
-                                    <button type="button" id="anima-cycle-clear-records">Clear Records</button>
-                                    <small>Reset Auto Cycle count and used artist history.</small>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <span class="anima-cycle-status" id="anima-cycle-status">stopped</span>
-                    <div class="cycle-search">
-                        <i>@</i>
-                        <input type="text" placeholder="Search artists or prompts..." autocomplete="off" spellcheck="false"/>
-                    </div>
-                    <select class="hdr-select anima-sort-select" title="Sort current tab">
-                        <option value="works">Popularity</option>
-                        <option value="uniqueness">Uniqueness</option>
-                        <option value="name">A - Z</option>
-                    </select>
-                    <div class="cycle-gap"></div>
-                    <span class="cycle-hint">Automatically queues prompts to test styles in a continuous loop</span>
-                </div>
                 <div class="anima-prompt-panel">
                     <div class="anima-prompt-head">
-                        <span>Prompt Preview</span>
+                        <span class="anima-prompt-title">Prompt Preview</span>
                         <small id="anima-prompt-status">editable</small>
                         <label class="anima-prompt-subject">
                             <select id="anima-cycle-subject">
@@ -205,6 +216,7 @@
                         </label>
                     </div>
                     <textarea id="anima-prompt-editor" spellcheck="false" placeholder="Active prompt text will appear here..."></textarea>
+                    <button type="button" class="anima-prompt-toggle" id="anima-prompt-toggle" title="Collapse Prompt Preview" aria-label="Collapse Prompt Preview" aria-expanded="true"></button>
                 </div>
                 <div class="body">
                     <div class="anima-grid" id="anima-grid">
@@ -276,7 +288,7 @@
                     <div class="ftr-info-wrap">
                         <button class="ftr-info-btn" id="anima-footer-info">Info</button>
                         <div class="ftr-info-menu">
-                            <span>Node created by <a href="https://github.com/fulletLab" target="_blank" rel="noopener">fulletLab</a></span>
+                            <span>Node created by <a href="https://github.com/fulletLab" target="_blank" rel="noopener">fulletLab</a> and <a href="https://github.com/Muruaaki" target="_blank" rel="noopener">Muruaaki</a></span>
                             <a href="${siteBase}" target="_blank" rel="noopener">Anima assets -&gt;</a>
                             <a href="https://animadex.net/?mode=artists" target="_blank" rel="noopener">Animadex styles -&gt;</a>
                             <a href="https://animadex.net/?mode=characters" target="_blank" rel="noopener">Characters -&gt;</a>
