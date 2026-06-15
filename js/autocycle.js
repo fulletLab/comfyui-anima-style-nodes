@@ -2,6 +2,7 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { Data } from "./data.js";
 import { normalizeGeneratedTag } from "./browser_generated.js";
+import { buildStyleList } from "./browser_renderers.js";
 import { applyCharacterGroup, applyStyle, applyStyleGroup } from "./utils.js";
 
 const CONFIG_KEY = "anima_autocycle_config_v1";
@@ -223,6 +224,11 @@ function pickRandom(pool, config = DEFAULT_CONFIG) {
         if (roll <= 0) return item;
     }
     return pool[pool.length - 1];
+}
+
+function currentGallerySort() {
+    const value = String(document.querySelector("#anima-browser .hdr-select")?.value || "").trim();
+    return value || "works";
 }
 
 export const AutoCycle = (() => {
@@ -500,9 +506,10 @@ export const AutoCycle = (() => {
         ]);
 
         if (config.pickMode === "order" && config.source !== "characters") {
-            const orderedTags = Array.from(document.querySelectorAll("#anima-browser .anima-card[data-tag]"))
-                .map((card) => String(card.dataset.tag || "").trim().toLowerCase())
-                .filter(Boolean);
+            const orderedTags = buildStyleList(
+                list.filter((item) => item && !isCharacter(item)),
+                { sort: currentGallerySort(), filter: "" }
+            ).map((item) => String(item?.tag || "").trim().toLowerCase()).filter(Boolean);
             const byTag = new Map(list.map((item) => [String(item?.tag || "").trim().toLowerCase(), item]));
             const orderedStyles = orderedTags
                 .map((tag) => byTag.get(tag))

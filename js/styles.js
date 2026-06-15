@@ -200,6 +200,11 @@ export function injectCSS() {
 .anima-favorites-toolbar i { color:#9fb0d6; font-size:10px; font-family:'JetBrains Mono',monospace; font-style:normal; }
 .anima-favorite-bulk-toolbar select,
 .anima-favorites-toolbar select { min-height:28px; max-width:210px; border-radius:7px; border:1px solid #2b3c60; background:#10182b; color:#dce6ff; font-size:10.5px; outline:none; padding:5px 8px; }
+.anima-favorite-category-editor { display:inline-flex; align-items:center; gap:6px; }
+.anima-favorite-category-editor.hidden { display:none; }
+.anima-favorite-category-editor input { min-height:28px; width:150px; max-width:34vw; box-sizing:border-box; border-radius:7px; border:1px solid #2b3c60; background:#10182b; color:#dce6ff; font-size:10.5px; outline:none; padding:5px 8px; }
+.anima-favorite-category-editor input::placeholder { color:#5f6d8f; }
+.anima-favorite-category-editor input:focus { border-color:#51689c; }
 .anima-favorite-bulk-toolbar button:disabled,
 .anima-favorite-bulk-toolbar select:disabled { opacity:.55; cursor:not-allowed; }
 .anima-toolbar-divider { width:1px; height:22px; background:#273450; margin:0 4px; padding:0; flex:0 0 auto; }

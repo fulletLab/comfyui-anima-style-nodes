@@ -22,6 +22,8 @@ export const Swipe = (() => {
     let _isFavorited = null;
     let _getFavoriteCategory = null;
     let _getFavoriteCategoryOptions = null;
+    let _pendingFavoriteCategory = "";
+    let _favoriteCategoryTarget = null;
 
     let _keyHandler = null;
     const _preloaded = new Set();
@@ -74,7 +76,9 @@ export const Swipe = (() => {
         categorySelect?.addEventListener("change", (e) => {
             e.preventDefault();
             e.stopPropagation();
-            _setFavoriteCategory(e.currentTarget.value);
+            _favoriteCategoryTarget = String(e.currentTarget.value || "").trim();
+            _pendingFavoriteCategory = _favoriteCategoryTarget;
+            _syncFavoriteButton();
         });
 
         prevImg.addEventListener("click", (e) => { e.stopPropagation(); _navigate(-1); });
@@ -115,31 +119,17 @@ export const Swipe = (() => {
         if (!item || typeof _onToggleFavorite !== "function") return;
         if (favoriteBtn) favoriteBtn.disabled = true;
         try {
-            const res = await _onToggleFavorite(item, favoriteBtn);
+            const res = await _onToggleFavorite(item, favoriteBtn, _pendingFavoriteCategory);
             if (res?.ok && typeof res.favorited === "boolean") {
                 item._swipeFavorited = res.favorited;
             }
-        } catch (_) {
-        } finally {
-            if (favoriteBtn) favoriteBtn.disabled = false;
-            _syncFavoriteButton();
-        }
-    }
-
-    async function _setFavoriteCategory(category) {
-        const item = _getItem(_index);
-        if (!item || typeof _onSetFavoriteCategory !== "function") return;
-        if (categorySelect) categorySelect.disabled = true;
-        try {
-            const res = await _onSetFavoriteCategory(item, category, categorySelect);
-            if (res?.ok) {
-                item.category = String(category || "").trim();
-                item._swipeFavorited = true;
+            if (res?.ok && typeof res.category === "string") {
+                item.category = res.category;
             }
         } catch (_) {
         } finally {
-            if (categorySelect) categorySelect.disabled = false;
             _syncFavoriteButton();
+            if (favoriteBtn) favoriteBtn.disabled = false;
             _syncCategorySelect();
         }
     }
@@ -151,15 +141,29 @@ export const Swipe = (() => {
         return false;
     }
 
+    function _currentFavoriteCategory(item) {
+        if (!item) return "";
+        if (typeof _getFavoriteCategory === "function") return String(_getFavoriteCategory(item) || "").trim();
+        return String(item?.category || "").trim();
+    }
+
+    function _isChangingFavoriteCategory(item) {
+        if (!_favoriteState(item)) return false;
+        return String(_favoriteCategoryTarget ?? "").trim() !== _currentFavoriteCategory(item);
+    }
+
     function _syncFavoriteButton() {
         if (!favoriteBtn) return;
         const item = _getItem(_index);
         const enabled = !!item && typeof _onToggleFavorite === "function";
         const favorited = _favoriteState(item);
+        const changingCategory = _isChangingFavoriteCategory(item);
         el?.classList.toggle("favorited", favorited);
         favoriteBtn.style.display = enabled ? "inline-flex" : "none";
         favoriteBtn.classList.toggle("active", favorited);
-        favoriteBtn.textContent = favorited ? "Unfavorite" : "Favorite";
+        favoriteBtn.textContent = favorited
+            ? (changingCategory ? "Move Category" : "Unfavorite")
+            : "Favorite";
     }
 
     function _syncCategorySelect() {
@@ -175,6 +179,10 @@ export const Swipe = (() => {
         const current = typeof _getFavoriteCategory === "function"
             ? String(_getFavoriteCategory(item) || "")
             : String(item?.category || "");
+        if (_favoriteCategoryTarget === null) {
+            _favoriteCategoryTarget = current;
+        }
+        _pendingFavoriteCategory = _favoriteCategoryTarget;
         const escapeOption = (value) => String(value ?? "")
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
@@ -183,9 +191,9 @@ export const Swipe = (() => {
         categorySelect.innerHTML = options.map((option) => {
             const value = String(option?.value || "");
             const label = String(option?.label || value || "Uncategorized");
-            return `<option value="${escapeOption(value)}" ${value === current ? "selected" : ""}>${escapeOption(label)}</option>`;
+            return `<option value="${escapeOption(value)}" ${value === _favoriteCategoryTarget ? "selected" : ""}>${escapeOption(label)}</option>`;
         }).join("");
-        categorySelect.value = current;
+        categorySelect.value = _favoriteCategoryTarget;
     }
 
     function _navigate(delta) {
@@ -304,6 +312,8 @@ export const Swipe = (() => {
         _getFavoriteCategoryOptions = getFavoriteCategoryOptions ?? null;
         _getImageUrl = getImageUrl ?? null;
         _getTitle = getTitle ?? null;
+        _pendingFavoriteCategory = "";
+        _favoriteCategoryTarget = null;
         _preloaded.clear();
         _preloadedAheadIndex = _index - 1;
         _preloadedBehindIndex = _index + 1;
@@ -330,6 +340,8 @@ export const Swipe = (() => {
         _isFavorited = null;
         _getFavoriteCategory = null;
         _getFavoriteCategoryOptions = null;
+        _pendingFavoriteCategory = "";
+        _favoriteCategoryTarget = null;
         _getImageUrl = null;
         _getTitle = null;
         _preloaded.clear();

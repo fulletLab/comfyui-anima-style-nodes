@@ -382,12 +382,13 @@ export const Browser = (() => {
         });
     }
 
-    async function _createFavoriteCategory(defaultName = "") {
-        const name = _favoriteCategoryName(window.prompt("Category name", defaultName));
+    async function _createFavoriteCategory(defaultName = "", anchorEl = null, { usePrompt = true } = {}) {
+        const rawName = usePrompt ? window.prompt("Category name", defaultName) : defaultName;
+        const name = _favoriteCategoryName(rawName);
         if (!name) return "";
         const result = await _mutateLocalFavorites({ action: "category_upsert", name });
         if (!result.ok) {
-            showToast(result.error || "Could not create category", "error", 2400, { anchor: el?.querySelector("#anima-settings-gear") });
+            showToast(result.error || "Could not create category", "error", 2400, { anchor: anchorEl || el?.querySelector("#anima-settings-gear") });
             return "";
         }
         _favoriteCategories = Array.isArray(result.categories) ? result.categories : _favoriteCategories;
@@ -510,7 +511,12 @@ export const Browser = (() => {
         toolbar.innerHTML = `
             <span>Category</span>
             <select data-favorite-category-filter>${_categorySelectOptions({ includeAll: true, selected: _favoriteCategoryFilter })}</select>
-            <button type="button" class="hdr-btn-txt" data-favorite-category-new>New</button>
+            <button type="button" class="hdr-btn-txt" data-favorite-category-new>New Category</button>
+            <span class="anima-favorite-category-editor hidden" data-favorite-category-editor>
+                <input type="text" data-favorite-category-input maxlength="80" placeholder="Category name" />
+                <button type="button" class="hdr-btn-txt" data-favorite-category-save>Add</button>
+                <button type="button" class="hdr-btn-txt" data-favorite-category-cancel>Cancel</button>
+            </span>
             <button type="button" class="hdr-btn-txt" data-favorite-category-rename>Rename</button>
             <button type="button" class="hdr-btn-txt" data-favorite-category-delete>Delete</button>
             <i>${totalCount} shown</i>
@@ -521,22 +527,52 @@ export const Browser = (() => {
                 <button type="button" class="hdr-btn-txt" data-selection-all>Select Page</button>
                 <button type="button" class="hdr-btn-txt" data-selection-clear>Clear</button>
                 <select data-selection-category>${_categorySelectOptions({ selected: "" })}</select>
-                <button type="button" class="hdr-btn-txt" data-selection-new>New Category</button>
                 <button type="button" class="hdr-btn-txt" data-selection-assign data-selection-requires-items disabled>Set Favorite Category</button>
             ` : ""}
         `;
         grid.prepend(toolbar);
         const select = toolbar.querySelector("[data-favorite-category-filter]");
         const assignSelect = toolbar.querySelector("[data-selection-category]");
+        const categoryEditor = toolbar.querySelector("[data-favorite-category-editor]");
+        const categoryInput = toolbar.querySelector("[data-favorite-category-input]");
+        const hideCategoryEditor = () => {
+            categoryEditor?.classList.add("hidden");
+            if (categoryInput) categoryInput.value = "";
+        };
+        const saveNewFavoriteCategory = async (anchorEl = null) => {
+            const name = await _createFavoriteCategory(categoryInput?.value || "", anchorEl, { usePrompt: false });
+            if (!name) return;
+            if (select) select.innerHTML = _categorySelectOptions({ includeAll: true, selected: _favoriteCategoryFilter });
+            if (assignSelect) {
+                assignSelect.innerHTML = _categorySelectOptions({ selected: name });
+            }
+            hideCategoryEditor();
+            if (!_multiSelectMode || !_selectedFavoriteItems.size) {
+                _favoriteCategoryFilter = name;
+                await _renderFavorites({ preservePage: true });
+            } else {
+                showToast(`Created ${name}`, "success", 1600, { anchor: anchorEl });
+            }
+        };
         select?.addEventListener("change", async (event) => {
             _favoriteCategoryFilter = event.currentTarget.value;
             await _renderFavorites({ preservePage: true });
         });
-        toolbar.querySelector("[data-favorite-category-new]")?.addEventListener("click", async () => {
-            const name = await _createFavoriteCategory("");
-            if (!name) return;
-            _favoriteCategoryFilter = name;
-            await _renderFavorites({ preservePage: true });
+        toolbar.querySelector("[data-favorite-category-new]")?.addEventListener("click", () => {
+            categoryEditor?.classList.remove("hidden");
+            categoryInput?.focus();
+        });
+        toolbar.querySelector("[data-favorite-category-save]")?.addEventListener("click", async (event) => {
+            await saveNewFavoriteCategory(event.currentTarget);
+        });
+        toolbar.querySelector("[data-favorite-category-cancel]")?.addEventListener("click", hideCategoryEditor);
+        categoryInput?.addEventListener("keydown", async (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                await saveNewFavoriteCategory(event.currentTarget);
+            } else if (event.key === "Escape") {
+                hideCategoryEditor();
+            }
         });
         toolbar.querySelector("[data-favorite-category-rename]")?.addEventListener("click", async (event) => {
             const oldName = _favoriteCategoryName(select?.value);
@@ -598,11 +634,6 @@ export const Browser = (() => {
                 btn.setAttribute("aria-pressed", "false");
             });
             _syncSelectionToolbar();
-        });
-        toolbar.querySelector("[data-selection-new]")?.addEventListener("click", async () => {
-            const name = await _createFavoriteCategory("");
-            if (!name || !assignSelect) return;
-            assignSelect.innerHTML = _categorySelectOptions({ selected: name });
         });
         toolbar.querySelector("[data-selection-assign]")?.addEventListener("click", async (event) => {
             await _batchAssignSelectedFavorites(assignSelect?.value || "", event.currentTarget);
@@ -1307,7 +1338,7 @@ export const Browser = (() => {
         return key ? _favoriteMap.has(key) : false;
     }
 
-    async function _toggleStyleFavorite(artist, anchorEl = null) {
+    async function _toggleStyleFavorite(artist, anchorEl = null, categoryName = null) {
         const entry = localFavoriteFromStyle(artist);
         if (!entry) {
             alert("Invalid style favorite payload.");
@@ -1315,6 +1346,21 @@ export const Browser = (() => {
         }
 
         const already = _favoriteMap.has(entry.key);
+        const requestedCategory = categoryName === null ? null : _favoriteCategoryName(categoryName);
+        const currentCategory = _favoriteCategoryName(_favoriteMap.get(entry.key)?.category || artist?.category || entry.category || "");
+        if (already && requestedCategory !== null && requestedCategory !== currentCategory) {
+            entry.category = requestedCategory;
+            await _assignFavoriteCategoryItems([entry], requestedCategory, anchorEl);
+            if (category === "favorites") {
+                await _renderFavorites();
+            }
+            return { ok: true, favorited: true, category: requestedCategory };
+        }
+
+        if (!already && requestedCategory !== null) {
+            entry.category = requestedCategory;
+        }
+
         const nextState = !already;
         const result = already
             ? await _mutateLocalFavorites({ action: "remove", key: entry.key })
@@ -1330,10 +1376,10 @@ export const Browser = (() => {
         if (category === "favorites") {
             await _renderFavorites();
         }
-        return { ok: true, favorited: nextState };
+        return { ok: true, favorited: nextState, category: requestedCategory ?? currentCategory };
     }
 
-    async function _toggleFulletFavorite(post, anchorEl = null) {
+    async function _toggleFulletFavorite(post, anchorEl = null, categoryName = null) {
         const localEntry = localFavoriteFromFullet(post);
         if (!localEntry) {
             alert("Invalid prompt favorite payload.");
@@ -1341,6 +1387,22 @@ export const Browser = (() => {
         }
 
         const already = _favoriteMap.has(localEntry.key);
+        const requestedCategory = categoryName === null ? null : _favoriteCategoryName(categoryName);
+        const currentCategory = _favoriteCategoryName(_favoriteMap.get(localEntry.key)?.category || post?.category || localEntry.category || "");
+        if (already && requestedCategory !== null && requestedCategory !== currentCategory) {
+            localEntry.category = requestedCategory;
+            await _assignFavoriteCategoryItems([localEntry], requestedCategory, anchorEl);
+            if (category === "favorites") {
+                _remoteFavoritesLoaded = false;
+                await _renderFavorites();
+            }
+            return { ok: true, favorited: true, category: requestedCategory };
+        }
+
+        if (!already && requestedCategory !== null) {
+            localEntry.category = requestedCategory;
+        }
+
         const nextState = !already;
 
         const localResult = nextState
@@ -1375,7 +1437,7 @@ export const Browser = (() => {
             _remoteFavoritesLoaded = false;
             await _renderFavorites();
         }
-        return { ok: true, favorited: nextState };
+        return { ok: true, favorited: nextState, category: requestedCategory ?? currentCategory };
     }
 
     async function _loadFulletPrompts(force = false) {
@@ -1634,11 +1696,11 @@ export const Browser = (() => {
                 if (String(item?.source_kind || "").toLowerCase() === "character") return;
                 highlight(item?.tag || "");
             },
-            onToggleFavorite: async (item, anchorEl = null) => {
+            onToggleFavorite: async (item, anchorEl = null, categoryName = null) => {
                 if (isFulletLike(item)) {
-                    return await _toggleFulletFavorite(item, anchorEl);
+                    return await _toggleFulletFavorite(item, anchorEl, categoryName);
                 }
-                return await _toggleStyleFavorite(item, anchorEl);
+                return await _toggleStyleFavorite(item, anchorEl, categoryName);
             },
             onSetFavoriteCategory: async (item, categoryName = "", anchorEl = null) => {
                 return await _setFavoriteCategoryForItem(item, categoryName, anchorEl);
