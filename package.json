@@ -1,6 +1,0 @@
-{
-  "type": "module",
-  "scripts": {
-    "test:js": "node tests/test_browser_lists.mjs && node tests/test_data_loading.mjs && node tests/test_autocycle_order_source.mjs && node tests/test_cycle_button_ui.mjs && node tests/test_settings_menu_ui.mjs && node tests/test_light_theme_ui.mjs && node tests/test_mobile_responsive_ui.mjs && node tests/test_favorites_toolbar_ui.mjs && node tests/test_favorites_scroll_preserve_ui.mjs && node tests/test_swipe_favorite_category_ui.mjs && node tests/test_shared_control_styles.mjs && node tests/test_unused_ui_cleanup.mjs"
-  }
-}
