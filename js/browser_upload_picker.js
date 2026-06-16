@@ -367,7 +367,7 @@ function normalizeHistoryEntries(payload) {
     }));
 }
 
-function buildUploadItems(historyPayload) {
+export function buildUploadItems(historyPayload, { limit = MAX_UPLOAD_ITEMS } = {}) {
     const entries = normalizeHistoryEntries(historyPayload);
     const items = [];
 
@@ -424,7 +424,7 @@ function buildUploadItems(historyPayload) {
             seen.add(key);
             return true;
         })
-        .slice(0, MAX_UPLOAD_ITEMS);
+        .slice(0, Math.max(0, Number(limit) || MAX_UPLOAD_ITEMS));
 }
 
 function buildArtistLookup(artists = []) {
@@ -583,7 +583,7 @@ function renderCard(item, { onUpload, isSelected, onToggleSelection }) {
         <div class="anima-upload-thumb" data-init="${escapeHtml((item.artist[0] || "?").toUpperCase())}">
             <img loading="lazy" src="${escapeHtml(item.viewUrl)}" alt="${escapeHtml(item.artist)}" onerror="this.style.display='none';this.parentElement.classList.add('no-img')" />
             <span class="anima-upload-badge">@${escapeHtml(item.artist)}</span>
-            <button class="anima-upload-select" type="button" aria-pressed="${isSelected ? "true" : "false"}" title="Select for collage">
+            <button class="anima-control anima-upload-select" type="button" aria-pressed="${isSelected ? "true" : "false"}" title="Select for collage">
                 ${isSelected ? "Selected" : "Select"}
             </button>
         </div>
@@ -593,7 +593,7 @@ function renderCard(item, { onUpload, isSelected, onToggleSelection }) {
                 <span class="anima-upload-time">${escapeHtml(formatTimeLabel(item.timestamp))}</span>
             </div>
             <p class="anima-upload-prompt">${escapeHtml(item.promptPreview || item.prompt || "Generated image")}</p>
-            <button class="anima-upload-action">Publish single image</button>
+            <button class="anima-control anima-control-full anima-upload-action">Publish single image</button>
         </div>
     `;
 

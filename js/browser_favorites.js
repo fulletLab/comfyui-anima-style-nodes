@@ -25,12 +25,20 @@ export function rebuildFavoriteMap(localFavorites = [], remoteFavorites = []) {
 }
 
 export async function loadLocalFavorites(api) {
+    const payload = await loadLocalFavoritesPayload(api);
+    return payload.items;
+}
+
+export async function loadLocalFavoritesPayload(api) {
     try {
         const r = await api.fetchApi("/anima/favorites");
         const data = await r.json().catch(() => ({}));
-        return Array.isArray(data.items) ? data.items : [];
+        return {
+            items: Array.isArray(data.items) ? data.items : [],
+            categories: Array.isArray(data.categories) ? data.categories : [],
+        };
     } catch {
-        return [];
+        return { items: [], categories: [] };
     }
 }
 
@@ -56,11 +64,50 @@ export async function mutateLocalFavorites(api, headers, payload) {
             ok: true,
             data,
             items: Array.isArray(data.items) ? data.items : [],
+            categories: Array.isArray(data.categories) ? data.categories : [],
             status: r.status,
         };
     } catch (err) {
         return { ok: false, error: err?.message || "Favorite update failed", status: 0 };
     }
+}
+
+function timestampForFilename() {
+    return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function exportLocalFavorites(api) {
+    const response = await api.fetchApi("/anima/favorites/export");
+    if (!response.ok) {
+        throw new Error(`Favorites export failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    downloadBlob(blob, `anima-favorites-${timestampForFilename()}.json`);
+}
+
+export async function importLocalFavorites(api, headers, file) {
+    if (!file) return [];
+    const payload = JSON.parse(await file.text());
+    const result = await mutateLocalFavorites(api, headers, {
+        action: "import",
+        items: Array.isArray(payload?.items) ? payload.items : [],
+        categories: Array.isArray(payload?.categories) ? payload.categories : [],
+    });
+    if (!result.ok) {
+        throw new Error(result.error || "Favorites import failed");
+    }
+    return result.items;
 }
 
 export async function loadRemoteFavorites(api, { limit = 96, offset = 0 } = {}) {
@@ -121,6 +168,7 @@ function mergeStyleFavoriteSnapshot(snapshot = {}, known = null) {
         _favoriteKey: String(snapshot?.key || favoriteKeyFromItem(snapshot)),
         _preferLocalThumb: !!snapshot?.localPreviewCached,
         localPreviewCached: !!snapshot?.localPreviewCached,
+        category: String(snapshot?.category || known?.category || "").trim(),
     };
 
     if (!merged._s) {
@@ -134,6 +182,8 @@ export function buildFavoritesList({
     localFavorites = [],
     remoteFavorites = [],
     filter = "",
+    categoryFilter = "__all__",
+    sort = "latest",
 }) {
     const byTag = new Map(artists.map((artist) => [normalizeTag(artist?.tag || ""), artist]));
     const merged = new Map();
@@ -161,6 +211,7 @@ export function buildFavoritesList({
             postUrl: String(post?.postUrl || "").trim(),
             key,
             addedAt: String(prev?.addedAt || post?.createdAt || ""),
+            category: String(prev?.category || "").trim(),
         });
     }
 
@@ -175,7 +226,32 @@ export function buildFavoritesList({
         }
     }
 
-    list = sortByDateDesc(list);
+    if (sort === "works") {
+        list.sort((a, b) => {
+            const works = (Number(b?.works) || 0) - (Number(a?.works) || 0);
+            if (works) return works;
+            return (a?.tag || a?.artist || "").localeCompare(b?.tag || b?.artist || "");
+        });
+    } else if (sort === "uniqueness") {
+        list.sort((a, b) => {
+            const score = (Number(b?.uniqueness_score) || 0) - (Number(a?.uniqueness_score) || 0);
+            if (score) return score;
+            return (Number(b?.works) || 0) - (Number(a?.works) || 0);
+        });
+    } else if (sort === "name") {
+        list.sort((a, b) => {
+            const aName = isFulletLike(a) ? String(a?.artist || "") : String(a?.tag || "");
+            const bName = isFulletLike(b) ? String(b?.artist || "") : String(b?.tag || "");
+            return aName.localeCompare(bName);
+        });
+    } else {
+        list = sortByDateDesc(list);
+    }
+
+    if (categoryFilter !== "__all__") {
+        const wanted = String(categoryFilter || "").trim();
+        list = list.filter((item) => String(item?.category || "").trim() === wanted);
+    }
 
     if (filter) {
         const q = filter.toLowerCase();

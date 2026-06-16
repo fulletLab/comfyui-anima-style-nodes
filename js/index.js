@@ -92,6 +92,15 @@ function refreshNodeCanvas(node) {
     } catch { }
 }
 
+function readAnimaThemeColor(name, fallback) {
+    try {
+        const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        return value || fallback;
+    } catch {
+        return fallback;
+    }
+}
+
 function growNodeIfNeeded(node) {
     if (!node) return;
     try {
@@ -131,9 +140,10 @@ function ensureTagDisplayWidget(node) {
             const tag = n._currentTag;
             if (!tag) return;
             const kind = String(n._currentTagKind || "style").toUpperCase();
+            const isCharacter = kind === "CHARACTER";
             ctx.save();
-            ctx.fillStyle = kind === "CHARACTER" ? "#111827" : "#0f1324";
-            ctx.strokeStyle = kind === "CHARACTER" ? "#31515f" : "#2b3552";
+            ctx.fillStyle = readAnimaThemeColor(isCharacter ? "--anima-canvas-character-bg" : "--anima-canvas-style-bg", isCharacter ? "#111827" : "#0f1324");
+            ctx.strokeStyle = readAnimaThemeColor(isCharacter ? "--anima-canvas-character-border" : "--anima-canvas-style-border", isCharacter ? "#31515f" : "#2b3552");
             ctx.lineWidth = 1;
             ctx.beginPath();
             if (typeof ctx.roundRect === "function") {
@@ -143,7 +153,7 @@ function ensureTagDisplayWidget(node) {
             }
             ctx.fill();
             ctx.stroke();
-            ctx.fillStyle = kind === "CHARACTER" ? "#9bd7ef" : "#aebce2";
+            ctx.fillStyle = readAnimaThemeColor(isCharacter ? "--anima-canvas-character-text" : "--anima-canvas-style-text", isCharacter ? "#9bd7ef" : "#aebce2");
             ctx.font = "500 10px 'JetBrains Mono',monospace";
             ctx.textAlign = "center";
             ctx.fillText(`${kind} @${tag.replace(/_/g, " ")}`, width / 2, y + 15);
@@ -179,6 +189,7 @@ async function openStyleBrowser(node) {
         const browser = mod?.Browser;
         if (!browser) throw new Error("Browser module unavailable");
         browser.open((artist, options) => AutoCycle.inject(node, artist, options), node);
+        AutoCycle.setGeneratedSyncHandler?.((options) => browser.syncGeneratedPreviews?.(options));
         AutoCycle.bindControls?.(document.getElementById("anima-browser"));
         const cycleBtn = browser.cycleBtn?.();
         if (cycleBtn) {

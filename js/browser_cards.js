@@ -55,8 +55,8 @@ function showCharacterActionMenu(mediaEl, artist, mode, onAdd) {
         <span class="anima-card-action-title">${escapeHtml(mode === "trigger-tags" ? "Trigger + tags" : "Trigger")}</span>
         <span class="anima-card-action-text" title="${escapeHtml(text)}">${escapeHtml(text)}</span>
         <div class="anima-card-action-row">
-            <button type="button" data-action="copy">Copy</button>
-            <button type="button" data-action="add">Add to Prompt</button>
+            <button class="anima-control" type="button" data-action="copy">Copy</button>
+            <button class="anima-control" type="button" data-action="add">Add to Prompt</button>
         </div>
     `;
 
@@ -86,6 +86,23 @@ function closeStyleApplyModal() {
     document.querySelector(".anima-style-apply-modal")?.remove();
 }
 
+function removeFavoriteCardFromView(card) {
+    if (!card) return;
+    card.classList.add("anima-card-removing");
+    setTimeout(() => {
+        const chunk = card.closest?.(".anima-chunk");
+        card.remove();
+        if (chunk && !chunk.querySelector(".anima-card,.anima-fullet-card")) {
+            chunk.remove();
+        }
+        const toolbarCount = document.querySelector("#anima-browser .anima-favorites-toolbar i");
+        if (toolbarCount) {
+            const next = Math.max(0, (parseInt(toolbarCount.textContent, 10) || 0) - 1);
+            toolbarCount.textContent = `${next} shown`;
+        }
+    }, 140);
+}
+
 function showStyleActionMenu(mediaEl, artist, onApply, getStyleSlots) {
     const displayTag = String(artist?.tag || "").replace(/^@+/, "").replace(/_/g, " ").trim();
     if (!displayTag) return;
@@ -94,18 +111,18 @@ function showStyleActionMenu(mediaEl, artist, onApply, getStyleSlots) {
     closeStyleApplyModal();
 
     const slotButtons = slots.map((slot, index) => `
-        <button class="anima-style-apply-choice" type="button" data-style-action="replace-index" data-replace-index="${index}">
+        <button class="anima-control anima-style-apply-choice" type="button" data-style-action="replace-index" data-replace-index="${index}">
             Replace ${index + 1}: ${escapeHtml(slot.label || slot.token || "")}
         </button>
     `).join("");
 
     const replaceButtons = slots.length > 1
         ? `
-            <button class="anima-style-apply-choice" type="button" data-style-action="replace-all">Replace All Artists</button>
+            <button class="anima-control anima-style-apply-choice" type="button" data-style-action="replace-all">Replace All Artists</button>
             <div class="anima-style-apply-list">${slotButtons}</div>
           `
         : slots.length === 1
-            ? `<button class="anima-style-apply-choice" type="button" data-style-action="replace-index" data-replace-index="0">Replace Current Artist</button>`
+            ? `<button class="anima-control anima-style-apply-choice" type="button" data-style-action="replace-index" data-replace-index="0">Replace Current Artist</button>`
             : "";
 
     const modal = document.createElement("div");
@@ -118,10 +135,10 @@ function showStyleActionMenu(mediaEl, artist, onApply, getStyleSlots) {
                     <strong>Apply Style</strong>
                     <span>@${escapeHtml(displayTag)}</span>
                 </div>
-                <button type="button" class="anima-style-apply-close" data-style-close="1" title="Close">&#10005;</button>
+                <button type="button" class="anima-control anima-control-icon anima-style-apply-close" data-style-close="1" title="Close">&#10005;</button>
             </div>
             <div class="anima-style-apply-body">
-                <button class="anima-style-apply-choice anima-style-apply-primary" type="button" data-style-action="add">Add to Prompt</button>
+                <button class="anima-control anima-style-apply-choice anima-style-apply-primary" type="button" data-style-action="add">Add to Prompt</button>
                 ${replaceButtons}
                 ${slots.length ? "" : `<p class="anima-style-apply-empty">No artist tag is currently in the prompt. This will add the style.</p>`}
             </div>
@@ -156,7 +173,8 @@ export function createFulletCard({
     onOpenSwipe,
 }) {
     const card = document.createElement("div");
-    card.className = "anima-fullet-card";
+    card.className = `anima-fullet-card ${isFav ? "favorited" : ""}`;
+    card.dataset.animaAnchor = `fullet:${String(post?.id || post?.postId || post?.postUrl || "")}`;
 
     const artist = String(post?.artist || "").replace(/_/g, " ").trim();
     const user = String(post?.username || "").trim();
@@ -172,14 +190,14 @@ export function createFulletCard({
             <span class="anima-fullet-user">by @${escapeHtml(user)}</span>
 
             <div class="anima-fullet-actions anima-fullet-actions-main">
-                <button class="anima-card-pick" data-apply="both">Apply</button>
+                <button class="anima-control anima-control-full anima-card-pick" data-apply="both">Apply</button>
             </div>
 
             <div class="anima-fullet-actions anima-fullet-actions-secondary">
-                <button class="anima-fullet-mini" data-apply="prompt">Prompt</button>
-                <button class="anima-fullet-mini" data-apply="artist">Artist</button>
-                <button class="anima-fullet-mini" data-favorite="toggle">${isFav ? "Unfavorite" : "Favorite"}</button>
-                ${postUrl ? `<a href="${escapeHtml(postUrl)}" target="_blank" rel="noopener" class="anima-fullet-mini anima-fullet-mini-link">Open</a>` : ""}
+                <button class="anima-control anima-fullet-mini" data-apply="prompt">Prompt</button>
+                <button class="anima-control anima-fullet-mini" data-apply="artist">Artist</button>
+                <button class="anima-control anima-fullet-mini" data-favorite="toggle">${isFav ? "Unfavorite" : "Favorite"}</button>
+                ${postUrl ? `<a href="${escapeHtml(postUrl)}" target="_blank" rel="noopener" class="anima-control anima-fullet-mini anima-fullet-mini-link">Open</a>` : ""}
             </div>
         </div>
     `;
@@ -199,6 +217,8 @@ export function createFulletCard({
         const res = await onToggleFavorite?.(post, favBtn, mediaEl || favBtn);
         if (res?.ok && typeof res.favorited === "boolean") {
             favBtn.textContent = res.favorited ? "Unfavorite" : "Favorite";
+            card.classList.toggle("favorited", res.favorited);
+            if (res.removeFromFavoritesView) removeFavoriteCardFromView(card);
         }
     });
 
@@ -209,7 +229,13 @@ export function createFulletCard({
         onOpenSwipe?.(post);
     });
 
-    card.addEventListener("click", () => onApply?.(post, "both", mediaEl || card));
+    card.addEventListener("click", () => {
+        if (imageUrl) {
+            onOpenSwipe?.(post);
+            return;
+        }
+        onApply?.(post, "both", mediaEl || card);
+    });
     return card;
 }
 
@@ -219,13 +245,15 @@ export function createStyleCard({
     isUniq = false,
     isFav = false,
     onApply,
+    onGenerate,
     onToggleFavorite,
     onOpenSwipe,
     getStyleSlots,
 }) {
     const card = document.createElement("div");
-    card.className = "anima-card";
+    card.className = `anima-card ${isFav ? "favorited" : ""}`;
     card.dataset.tag = artist.tag;
+    card.dataset.animaAnchor = `style:${String(artist?.tag || "")}`;
 
     const rankHtml = isUniq && artist.uniquenessRank
         ? `<div class="anima-uniqueness-rank" title="Uniqueness score: ${Number(artist.uniqueness_score || 0).toFixed(2)}">#${artist.uniquenessRank}</div>`
@@ -244,23 +272,24 @@ export function createStyleCard({
     const titlePrefix = isCharacter ? "" : "@";
     const overlayButtons = isCharacter
         ? `
-                <button class="anima-card-pick" data-apply="trigger">Trigger</button>
-                <button class="anima-card-fav anima-card-trigger-tags" data-apply="trigger-tags">Trigger + tags</button>
+                <button class="anima-control anima-card-pick" data-apply="trigger">Trigger</button>
+                <button class="anima-control anima-card-fav anima-card-trigger-tags" data-apply="trigger-tags">Trigger + tags</button>
           `
         : `
-                <button class="anima-card-pick" data-apply="style">Apply Style</button>
-                <button class="anima-card-fav" data-favorite="toggle">${isFav ? "Unfavorite" : "Favorite"}</button>
+                <button class="anima-control anima-card-pick" data-apply="style">Apply Style</button>
+                <button class="anima-control anima-card-pick anima-card-generate" data-generate="style">Generate</button>
+                <button class="anima-control anima-card-fav" data-favorite="toggle">${isFav ? "Unfavorite" : "Favorite"}</button>
           `;
     const tagsPreview = isCharacter && Array.isArray(artist?.tags) && artist.tags.length
         ? `<span class="anima-card-tags-preview" title="${escapeHtml(artist.tags.join(", "))}">${escapeHtml(artist.tags.slice(0, 4).join(", "))}${artist.tags.length > 4 ? "..." : ""}</span>`
         : "";
 
     const imageHtml = imageUrl
-        ? `<img loading="lazy" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(artist.tag || "")}" onerror="this.style.display='none';this.parentElement.classList.add('no-img')"/>`
+        ? `<img loading="lazy" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(artist.tag || "")}" onload="this.parentElement.classList.remove('is-loading')" onerror="this.style.display='none';this.parentElement.classList.remove('is-loading');this.parentElement.classList.add('no-img')"/>`
         : "";
 
     card.innerHTML = `
-        <div class="anima-card-img ${fitClass} ${imageUrl ? "" : "no-img"}" data-init="${escapeHtml((artist.tag?.[0] || "?").toUpperCase())}">
+        <div class="anima-card-img ${fitClass} ${imageUrl ? "is-loading" : "no-img"}" data-init="${escapeHtml((artist.tag?.[0] || "?").toUpperCase())}">
             ${imageHtml}
             ${rankHtml}
             <div class="anima-card-overlay">
@@ -303,16 +332,37 @@ export function createStyleCard({
         showStyleActionMenu(mediaEl, artist, pick, getStyleSlots);
     }));
 
+    card.querySelectorAll("[data-generate]").forEach((btn) => btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        const oldText = btn.textContent;
+        btn.textContent = "Queued";
+        try {
+            await onGenerate?.(artist, mediaEl || btn);
+        } finally {
+            if (btn.isConnected) {
+                btn.disabled = false;
+                btn.textContent = oldText;
+            }
+        }
+    }));
+
     const favBtn = card.querySelector("[data-favorite='toggle']");
     favBtn?.addEventListener("click", async (e) => {
         e.stopPropagation();
         const res = await onToggleFavorite?.(artist, favBtn, mediaEl || favBtn);
         if (res?.ok && typeof res.favorited === "boolean") {
             favBtn.textContent = res.favorited ? "Unfavorite" : "Favorite";
+            card.classList.toggle("favorited", res.favorited);
+            if (res.removeFromFavoritesView) removeFavoriteCardFromView(card);
         }
     });
 
     card.addEventListener("click", () => {
+        if (imageUrl) {
+            onOpenSwipe?.(artist);
+            return;
+        }
         if (isCharacter) {
             showCharacterActionMenu(mediaEl, artist, "trigger", pick);
             return;
