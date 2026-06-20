@@ -1,5 +1,4 @@
 import nodes
-import sys
 
 class AnimaStyleExplorer(nodes.CLIPTextEncode):
 

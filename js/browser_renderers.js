@@ -69,7 +69,24 @@ export function buildFulletList(posts = [], filter = "") {
 export function buildStyleList(styles = [], { sort = "works", filter = "" } = {}) {
     let list = [...styles];
 
-    if (sort === "name") {
+    if (sort === "latest") {
+        const latestTime = (item) => {
+            const generatedAt = Number(item?.generatedAt || 0);
+            if (Number.isFinite(generatedAt) && generatedAt > 0) return generatedAt;
+            const rawDate = String(item?.addedAt || item?.createdAt || "").trim();
+            if (!rawDate) return 0;
+            return Date.parse(rawDate) || 0;
+        };
+        list.sort((a, b) => {
+            const bTime = latestTime(b);
+            const aTime = latestTime(a);
+            const t = bTime - aTime;
+            if (t) return t;
+            const w = (Number(b.works) || 0) - (Number(a.works) || 0);
+            if (w) return w;
+            return (a.tag || "").localeCompare(b.tag || "");
+        });
+    } else if (sort === "name") {
         list.sort((a, b) => (a.tag || "").localeCompare(b.tag || ""));
     } else if (sort === "uniqueness") {
         list.sort((a, b) => {
